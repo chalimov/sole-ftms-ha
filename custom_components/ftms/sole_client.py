@@ -161,8 +161,13 @@ class SoleClient:
         self._subscribed = True
         _LOGGER.info("Subscribed to Sole proprietary notifications")
 
-        # Send init sequence to trigger data flow
-        await self._init_handshake()
+        # Log all characteristics in the Sole service for debugging
+        svc = cli.services.get_service(SOLE_SERVICE_UUID)
+        if svc:
+            for ch in svc.characteristics:
+                _LOGGER.warning(
+                    "Sole char: %s props=%s", ch.uuid, ch.properties
+                )
 
     def reset(self) -> None:
         """Reset state on disconnect."""
@@ -171,7 +176,7 @@ class SoleClient:
 
     def _on_notify(self, _char: BleakGATTCharacteristic, data: bytearray) -> None:
         """Handle incoming Sole notification."""
-        _LOGGER.debug("Sole notify: %s", data.hex(" ").upper())
+        _LOGGER.warning("Sole notify: %s", data.hex(" ").upper())
 
         parsed = _parse_frame(bytes(data))
         if parsed is None:
