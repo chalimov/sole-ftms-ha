@@ -199,6 +199,10 @@ class SoleClient:
 
         _LOGGER.info("Sole: activating protocol (workout detected via FTMS)")
 
+        # Re-subscribe if previously deactivated
+        if not self._subscribed:
+            await self.subscribe(self._cli)
+
         try:
             frame = _build_frame(_OP_DEVICE_INFO, b"")
             await asyncio.wait_for(
@@ -221,22 +225,33 @@ class SoleClient:
             self._activated = False
 
     async def deactivate(self) -> None:
-        """Send Command(Stop) to cleanly exit the Sole protocol session."""
+        """Deactivate by unsubscribing from Sole notifications.
+
+        This simulates a BLE disconnect for the Sole service, which should
+        cause the treadmill to exit protocol mode and release buttons.
+        Re-subscribes on next activate().
+        """
+        self._activated = False
+
         if not self._cli or not self._cli.is_connected:
             return
 
-        _LOGGER.info("Sole: deactivating protocol (sending Command Stop)")
-        self._activated = False
+        _LOGGER.info("Sole: deactivating — unsubscribing from notifications")
 
-        try:
-            frame = _build_frame(_OP_COMMAND, bytes([0x02]))  # Stop
-            await asyncio.wait_for(
-                self._cli.write_gatt_char(SOLE_WRITE_UUID, frame, response=False),
-                timeout=5.0,
-            )
-            _LOGGER.info("Sole: deactivation complete, now passive")
-        except Exception:
-            _LOGGER.warning("Sole deactivation failed", exc_info=True)
+        for uuid, label in [
+            (SOLE_NOTIFY_UUID, "RX"),
+            (SOLE_NOTIFY2_UUID, "2nd"),
+        ]:
+            try:
+                char = self._cli.services.get_characteristic(uuid)
+                if char:
+                    await self._cli.stop_notify(char)
+                    _LOGGER.info("Unsubscribed from Sole %s notify", label)
+            except Exception:
+                _LOGGER.debug("Failed to unsubscribe Sole %s", label, exc_info=True)
+
+        self._subscribed = False
+        _LOGGER.info("Sole: deactivation complete, fully disconnected from Sole")
 
     def reset(self) -> None:
         """Reset state on disconnect."""
