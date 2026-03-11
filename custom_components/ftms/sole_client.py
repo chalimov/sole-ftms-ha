@@ -198,14 +198,11 @@ class SoleClient:
         """Activate the Sole protocol after the user starts a workout.
 
         Called by the integration when FTMS reports speed > 0.
-        Sends full handshake: DeviceInfo → wait → Command(Start).
+        _activated is set by caller before this is called.
         """
-        if self._activated:
-            return
         if not self._cli or not self._cli.is_connected:
             return
 
-        self._activated = True
         _LOGGER.warning("Sole: activating protocol (workout detected via FTMS)")
 
         try:
