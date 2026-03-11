@@ -28,28 +28,41 @@ SOLE_WRITE_UUID = "49535343-8841-43f4-a8d4-ecbe34729bb3"     # TX (write)
 _START = 0x5B
 _END = 0x5D
 
-# Opcodes
+# Opcodes (from treadonme constants.go)
 _OP_ACK = 0x00
 _OP_SET_WORKOUT_MODE = 0x02
 _OP_WORKOUT_MODE = 0x03
+_OP_WORKOUT_TARGET = 0x04
 _OP_WORKOUT_DATA = 0x06
 _OP_USER_PROFILE = 0x07
 _OP_PROGRAM = 0x08
+_OP_HR_TYPE = 0x09
+_OP_ERROR_CODE = 0x10
 _OP_SPEED = 0x11
 _OP_INCLINE = 0x12
+_OP_LEVEL = 0x13
+_OP_RPM = 0x14
 _OP_HEART_RATE = 0x15
+_OP_TARGET_HR = 0x20
+_OP_MAX_SPEED = 0x21
+_OP_MAX_INCLINE = 0x22
+_OP_MAX_LEVEL = 0x23
+_OP_USER_INCLINE = 0x25
+_OP_USER_LEVEL = 0x27
+_OP_END_WORKOUT = 0x32
+_OP_PROGRAM_GFX = 0x40
 _OP_DEVICE_INFO = 0xF0
 _OP_COMMAND = 0xF1
 
-# Workout modes
-_WM_IDLE = 0x01
-_WM_START = 0x02
-_WM_RUNNING = 0x04
-
-# Opcodes that should be acknowledged
-_ACK_OPCODES = {
-    _OP_WORKOUT_MODE, _OP_WORKOUT_DATA, _OP_SPEED, _OP_INCLINE, _OP_HEART_RATE,
+# Opcodes that get a standard ACK (opcode 0x00 + echoed opcode + OK)
+_STANDARD_ACK_OPCODES = {
+    _OP_WORKOUT_DATA, _OP_HR_TYPE, _OP_ERROR_CODE,
+    _OP_SPEED, _OP_INCLINE, _OP_LEVEL, _OP_RPM, _OP_HEART_RATE,
+    _OP_TARGET_HR, _OP_MAX_SPEED, _OP_MAX_INCLINE, _OP_MAX_LEVEL,
+    _OP_END_WORKOUT, _OP_PROGRAM_GFX,
 }
+
+# WorkoutMode (0x03) is special: must ECHO back the same message, not ACK
 
 type SoleCallback = Callable[[UpdateEvent], None]
 
@@ -132,17 +145,13 @@ def _parse_workout_data(data: bytes) -> UpdateEventData:
 
 
 class SoleClient:
-    """Client for the Sole proprietary BLE serial protocol.
-
-    Subscribes to notifications from the Sole service and parses incoming
-    workout data, feeding parsed values into the FTMS DataCoordinator.
-    """
+    """Client for the Sole proprietary BLE serial protocol."""
 
     def __init__(self, callback: SoleCallback) -> None:
         self._cb = callback
         self._subscribed = False
         self._cli: BleakClient | None = None
-        self._notify_count: dict[int, int] = {}  # opcode -> count (for log throttling)
+        self._notify_count: dict[int, int] = {}
 
     async def subscribe(self, cli: BleakClient) -> None:
         """Subscribe to Sole notifications on an existing BleakClient."""
@@ -153,24 +162,25 @@ class SoleClient:
             _LOGGER.debug("Sole service not found, skipping")
             return
 
-        notify_char = cli.services.get_characteristic(SOLE_NOTIFY_UUID)
-        if notify_char is None:
-            _LOGGER.warning("Sole notify characteristic not found")
-            return
-
         self._cli = cli
-        await cli.start_notify(notify_char, self._on_notify)
+
+        # Subscribe to BOTH notify characteristics
+        for uuid, label in [
+            (SOLE_NOTIFY_UUID, "RX"),
+            (SOLE_NOTIFY2_UUID, "2nd"),
+        ]:
+            char = cli.services.get_characteristic(uuid)
+            if char:
+                await cli.start_notify(char, self._on_notify)
+                _LOGGER.warning("Subscribed to Sole %s notify (%s)", label, uuid[-4:])
+
         self._subscribed = True
-        _LOGGER.warning("Subscribed to Sole RX notify")
 
-        # Also subscribe to the 2nd notify characteristic if present
-        notify2 = cli.services.get_characteristic(SOLE_NOTIFY2_UUID)
-        if notify2:
-            await cli.start_notify(notify2, self._on_notify)
-            _LOGGER.warning("Subscribed to Sole 2nd notify char")
-
-        # Try various approaches to trigger data flow
-        await self._init_handshake()
+        # Just request DeviceInfo — workout is already running via physical button
+        await self._write(
+            _build_frame(_OP_DEVICE_INFO, b""),
+            "DeviceInfo",
+        )
 
     def reset(self) -> None:
         """Reset state on disconnect."""
@@ -186,10 +196,10 @@ class SoleClient:
 
         opcode, payload = parsed
 
-        # Throttle logging: log first 3 of each opcode, then every 50th
+        # Throttle logging: log first 5 of each opcode, then every 100th
         cnt = self._notify_count.get(opcode, 0) + 1
         self._notify_count[opcode] = cnt
-        if cnt <= 3 or cnt % 50 == 0:
+        if cnt <= 5 or cnt % 100 == 0:
             _LOGGER.warning(
                 "Sole RX #%d op=0x%02X data=%s", cnt, opcode, payload.hex(" ").upper()
             )
@@ -216,8 +226,19 @@ class SoleClient:
         elif opcode == _OP_ACK:
             _LOGGER.warning("Sole ACK: %s", payload.hex(" "))
 
-        # Send ACK for data messages
-        if opcode in _ACK_OPCODES and self._cli is not None:
+        # WorkoutMode (0x03) is SPECIAL: echo it back (not standard ACK)
+        # This is how treadonme handles it — the treadmill expects its own
+        # WorkoutMode message echoed back to acknowledge receipt
+        if opcode == _OP_WORKOUT_MODE and self._cli is not None:
+            try:
+                asyncio.get_event_loop().create_task(
+                    self._echo_raw(bytes(data))
+                )
+            except Exception:
+                _LOGGER.debug("Failed to schedule WorkoutMode echo", exc_info=True)
+
+        # Standard ACK for data messages
+        elif opcode in _STANDARD_ACK_OPCODES and self._cli is not None:
             try:
                 asyncio.get_event_loop().create_task(self._send_ack(opcode))
             except Exception:
@@ -228,63 +249,26 @@ class SoleClient:
             event = UpdateEvent(event_id="update", event_data=update)
             self._cb(event)
 
-    async def _init_handshake(self) -> None:
-        """Try multiple approaches to trigger Sole data streaming."""
-        if not self._cli or not self._cli.is_connected:
-            return
-
-        try:
-            # Approach 1: Request DeviceInfo first
-            await self._write(
-                _build_frame(_OP_DEVICE_INFO, b""),
-                "DeviceInfo",
-            )
-
-            # Approach 2: Try SetWorkoutMode(Running=0x04) since workout is already active
-            await self._write(
-                _build_frame(_OP_SET_WORKOUT_MODE, bytes([_WM_RUNNING])),
-                "SetWorkoutMode(Running)",
-            )
-
-            # Approach 3: Request WorkoutData directly
-            await self._write(
-                _build_frame(_OP_WORKOUT_DATA, b""),
-                "WorkoutData request",
-            )
-
-            # Approach 4: Try writing to the 2nd characteristic
-            notify2_uuid = SOLE_NOTIFY2_UUID
-            _LOGGER.warning("Trying write to 2nd char...")
-            await self._cli.write_gatt_char(
-                notify2_uuid,
-                _build_frame(_OP_WORKOUT_DATA, b""),
-                response=False,
-            )
-            await asyncio.sleep(0.5)
-
-            # Approach 5: Try unknown opcodes that might request data
-            for op in [0x01, 0x05, 0x09, 0x0A, 0x10]:
-                await self._write(
-                    _build_frame(op, b""),
-                    f"Probe op=0x{op:02X}",
-                )
-
-        except Exception:
-            _LOGGER.warning("Sole init handshake failed", exc_info=True)
-
     async def _write(self, data: bytes, label: str = "") -> None:
         """Write data to the Sole write characteristic with delay."""
         if self._cli and self._cli.is_connected:
             _LOGGER.warning("Sole TX %s: %s", label, data.hex(" ").upper())
             await self._cli.write_gatt_char(SOLE_WRITE_UUID, data, response=False)
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.3)
+
+    async def _echo_raw(self, data: bytes) -> None:
+        """Echo raw frame back to the treadmill (for WorkoutMode)."""
+        try:
+            if self._cli and self._cli.is_connected:
+                await self._cli.write_gatt_char(SOLE_WRITE_UUID, data, response=False)
+        except Exception:
+            _LOGGER.debug("Failed to echo WorkoutMode", exc_info=True)
 
     async def _send_ack(self, opcode: int) -> None:
-        """Send ACK to the treadmill."""
+        """Send standard ACK to the treadmill."""
         try:
             if self._cli and self._cli.is_connected:
                 ack = _build_ack(opcode)
                 await self._cli.write_gatt_char(SOLE_WRITE_UUID, ack, response=False)
-                _LOGGER.debug("Sent Sole ACK for 0x%02X", opcode)
         except Exception:
             _LOGGER.debug("Failed to send Sole ACK", exc_info=True)
