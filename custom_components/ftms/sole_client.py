@@ -266,15 +266,14 @@ class SoleClient:
         elif opcode == _OP_ACK:
             _LOGGER.debug("Sole ACK: %s", payload.hex(" "))
 
-        # Only echo/ACK after we've been activated (avoid writing before workout)
-        if self._activated:
-            # WorkoutMode (0x03) is SPECIAL: echo it back (not standard ACK)
-            if opcode == _OP_WORKOUT_MODE and self._cli is not None:
-                asyncio.ensure_future(self._echo_raw(bytes(data)))
+        # WorkoutMode (0x03) MUST always be echoed — the treadmill needs this
+        # to transition properly between states (including post-workout)
+        if opcode == _OP_WORKOUT_MODE and self._cli is not None:
+            asyncio.ensure_future(self._echo_raw(bytes(data)))
 
-            # Standard ACK for data messages
-            elif opcode in _STANDARD_ACK_OPCODES and self._cli is not None:
-                asyncio.ensure_future(self._send_ack(opcode))
+        # Standard ACK only when activated (avoid writing before workout)
+        elif self._activated and opcode in _STANDARD_ACK_OPCODES and self._cli is not None:
+            asyncio.ensure_future(self._send_ack(opcode))
 
         # EndWorkout (0x32) — reset state and zero out sensors
         if opcode == _OP_END_WORKOUT:
