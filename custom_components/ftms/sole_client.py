@@ -185,9 +185,8 @@ class SoleClient:
                 _LOGGER.info("Subscribed to Sole %s notify", label)
 
         self._subscribed = True
-
-        # Initialize protocol and trigger data streaming
-        await self._start_workout()
+        # Fully passive — no writes on startup. We just listen for
+        # WorkoutMode changes to detect when the user starts a workout.
 
     def reset(self) -> None:
         """Reset state on disconnect."""
@@ -250,21 +249,6 @@ class SoleClient:
         if update:
             event = UpdateEvent(event_id="update", event_data=update)
             self._cb(event)
-
-    async def _start_workout(self) -> None:
-        """Initialize Sole protocol — handshake only.
-
-        Sends DeviceInfo to complete the handshake. Command(Start) is deferred
-        until we detect the user has started a workout (WorkoutMode != Idle).
-        """
-        if not self._cli or not self._cli.is_connected:
-            return
-
-        try:
-            # Request device info (triggers WorkoutMode exchange)
-            await self._write(_build_frame(_OP_DEVICE_INFO, b""))
-        except Exception:
-            _LOGGER.warning("Sole handshake failed", exc_info=True)
 
     async def _trigger_data_stream(self) -> None:
         """Send Command(Start) to trigger WorkoutData streaming.
