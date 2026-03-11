@@ -157,7 +157,7 @@ def _patched_on_notify(self, _c, data):
     except (AssertionError, EOFError, Exception) as exc:
         _LOGGER.debug("Failed to parse notify data (%s), trying tolerant parse", exc)
         try:
-            data_ = _tolerant_deserialize(self._serializer, data)
+            data_ = _tolerant_deserialize(self._serializer, data)._asdict()
         except Exception as exc2:
             _LOGGER.warning("Could not parse notify data at all: %s", exc2)
             return
