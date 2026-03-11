@@ -388,10 +388,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
                     return
                 event_data = getattr(data, 'event_data', None)
                 if event_data:
+                    _LOGGER.warning("Sole trigger: keys=%s, looking for '%s'",
+                                    list(event_data.keys()), _ftms_const.SPEED_INSTANT)
+                    # Try both the constant and any key containing 'speed'
                     speed = event_data.get(_ftms_const.SPEED_INSTANT, 0)
+                    if not speed:
+                        for k, v in event_data.items():
+                            if 'speed' in str(k).lower() and v and v > 0:
+                                speed = v
+                                break
                     if speed and speed > 0:
-                        # Set flag synchronously to prevent duplicate calls
                         sole_client._activated = True
+                        _LOGGER.warning("Sole: activating! speed=%s", speed)
                         asyncio.ensure_future(sole_client.activate())
 
             coordinator.async_set_updated_data = _set_updated_with_sole_trigger
