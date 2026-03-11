@@ -159,15 +159,10 @@ class SoleClient:
         self._cli = cli
         await cli.start_notify(notify_char, self._on_notify)
         self._subscribed = True
-        _LOGGER.info("Subscribed to Sole proprietary notifications")
+        _LOGGER.warning("Subscribed to Sole notifications, starting handshake")
 
-        # Log all characteristics in the Sole service for debugging
-        svc = cli.services.get_service(SOLE_SERVICE_UUID)
-        if svc:
-            for ch in svc.characteristics:
-                _LOGGER.warning(
-                    "Sole char: %s props=%s", ch.uuid, ch.properties
-                )
+        # Run handshake to trigger data flow
+        await self._init_handshake()
 
     def reset(self) -> None:
         """Reset state on disconnect."""
