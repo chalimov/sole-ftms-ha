@@ -1,0 +1,281 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Select a fitness machine",
+        "description": "Select a fitness machine to set up from the list below.",
+        "data": {
+          "address": "Discovered fitness machines:"
+        }
+      },
+      "confirm": {
+        "title": "Select discovery mode",
+        "description": "To poll the parameters of your fitness machine **{name}**, a connection will be made to it via Bluetooth.\n\nMake sure that there are no devices connected to it, for example, third-party training software on a mobile device.\n\nDue to the fact that the fitness machine may not provide some training data or provide dummy values, it is possible to try to determine them automatically. To do this, it is necessary to train intensively at this moment in one of the programs. After this stage you will be able to change this list.",
+        "data": {
+          "discovery": "Training data discovery mode:"
+        }
+      },
+      "information": {
+        "title": "Training data set",
+        "description": "Check and, if necessary, change the training data set of your fitness machine. This is a list of sensors created during device initialization. You will be able to change it manually in the future.",
+        "data": {
+          "sensors": "Select training data:"
+        }
+      }
+    },
+    "progress": {
+      "connecting": "Connection, reading device information and capabilities of the fitness machine...",
+      "discovering": "Automatic collection of training information...",
+      "closing": "Closing connection and saving the data..."
+    },
+    "abort": {
+      "not_supported": "Device not supported.",
+      "already_in_progress": "Device setup wizard is already running.",
+      "already_configured": "The device is already configured.",
+      "no_devices_found": "No devices found to setup."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Training data set",
+        "description": "Setting up a set of training data sensors.",
+        "data": {
+          "sensors": "Select training data:"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "cadence_average": {
+        "name": "Cadence average"
+      },
+      "cadence_instant": {
+        "name": "Cadence"
+      },
+      "distance_total": {
+        "name": "Distance total"
+      },
+      "elevation_gain_negative": {
+        "name": "Elevation gain negative"
+      },
+      "elevation_gain_positive": {
+        "name": "Elevation gain positive"
+      },
+      "energy_per_hour": {
+        "name": "Energy per hour"
+      },
+      "energy_per_minute": {
+        "name": "Energy per minute"
+      },
+      "energy_total": {
+        "name": "Energy total"
+      },
+      "force_on_belt": {
+        "name": "Force on belt"
+      },
+      "heart_rate": {
+        "name": "Heart rate"
+      },
+      "inclination": {
+        "name": "Inclination"
+      },
+      "metabolic_equivalent": {
+        "name": "Metabolic equivalent"
+      },
+      "movement_direction": {
+        "name": "Movement direction",
+        "state": {
+          "forward": "Forward",
+          "backward": "Backward"
+        }
+      },
+      "pace_average": {
+        "name": "Pace average"
+      },
+      "pace_instant": {
+        "name": "Pace"
+      },
+      "power_average": {
+        "name": "Power average"
+      },
+      "power_instant": {
+        "name": "Power"
+      },
+      "power_output": {
+        "name": "Power output"
+      },
+      "ramp_angle": {
+        "name": "Ramp angle"
+      },
+      "resistance_level": {
+        "name": "Resistance level"
+      },
+      "speed_average": {
+        "name": "Speed average"
+      },
+      "speed_instant": {
+        "name": "Speed"
+      },
+      "split_time_average": {
+        "name": "Split time average"
+      },
+      "split_time_instant": {
+        "name": "Split time"
+      },
+      "step_count": {
+        "name": "Step count"
+      },
+      "step_rate_average": {
+        "name": "Step rate average"
+      },
+      "step_rate_instant": {
+        "name": "Step rate"
+      },
+      "stride_count": {
+        "name": "Stride count"
+      },
+      "stroke_count": {
+        "name": "Stroke count"
+      },
+      "stroke_rate_average": {
+        "name": "Stroke rate average"
+      },
+      "stroke_rate_instant": {
+        "name": "Stroke rate"
+      },
+      "time_elapsed": {
+        "name": "Time elapsed"
+      },
+      "time_remaining": {
+        "name": "Time remaining"
+      },
+      "training_status": {
+        "name": "Status",
+        "state": {
+          "other": "Other",
+          "idle": "Idle",
+          "warming_up": "Warming Up",
+          "low_intensity_interval": "Low Intensity Interval",
+          "high_intensity_interval": "High Intensity Interval",
+          "recovery_interval": "Recovery Interval",
+          "isometric": "Isometric",
+          "heart_rate_control": "Heart Rate Control",
+          "fitness_test": "Fitness Test",
+          "speed_too_low": "Speed Too Low",
+          "speed_too_high": "Speed Too High",
+          "cool_down": "Cool Down",
+          "watt_control": "Watt Control",
+          "manual_mode": "Manual Mode",
+          "pre_workout": "Pre-Workout",
+          "post_workout": "Post-Workout"
+        }
+      }
+    },
+    "button": {
+      "start": {
+        "name": "Start/resume"
+      },
+      "stop": {
+        "name": "Stop"
+      },
+      "pause": {
+        "name": "Pause"
+      },
+      "reset": {
+        "name": "Reset"
+      }
+    },
+    "number": {
+      "target_speed": {
+        "name": "Speed"
+      },
+      "target_inclination": {
+        "name": "Inclination"
+      },
+      "target_resistance": {
+        "name": "Resistance"
+      },
+      "target_power": {
+        "name": "Power"
+      }
+    },
+    "switch": {
+      "connection": {
+        "name": "Connection"
+      }
+    }
+  },
+  "selector": {
+    "sensors": {
+      "options": {
+        "cadence_average": "Cadence average",
+        "cadence_instant": "Cadence",
+        "distance_total": "Distance total",
+        "elevation_gain_negative": "Elevation gain negative",
+        "elevation_gain_positive": "Elevation gain positive",
+        "energy_per_hour": "Energy per hour",
+        "energy_per_minute": "Energy per minute",
+        "energy_total": "Energy total",
+        "force_on_belt": "Force on belt",
+        "heart_rate": "Heart rate",
+        "inclination": "Inclination",
+        "metabolic_equivalent": "Metabolic equivalent",
+        "movement_direction": "Movement direction",
+        "pace_average": "Pace average",
+        "pace_instant": "Pace",
+        "power_average": "Power average",
+        "power_instant": "Power",
+        "power_output": "Power output",
+        "ramp_angle": "Ramp angle",
+        "resistance_level": "Resistance level",
+        "speed_average": "Speed average",
+        "speed_instant": "Speed",
+        "split_time_average": "Split time average",
+        "split_time_instant": "Split time",
+        "step_count": "Step count",
+        "step_rate_average": "Step rate average",
+        "step_rate_instant": "Step rate",
+        "stride_count": "Stride count",
+        "stroke_count": "Stroke count",
+        "stroke_rate_average": "Stroke rate average",
+        "stroke_rate_instant": "Stroke rate",
+        "time_elapsed": "Time elapsed",
+        "time_remaining": "Time remaining",
+        "training_status": "Training status"
+      }
+    },
+    "discovery": {
+      "options": {
+        "auto": "Auto (within 30 seconds)",
+        "manual": "Manual (based on the features report)"
+      }
+    }
+  },
+  "device": {
+    "treadmill": {
+      "name": "Treadmill"
+    },
+    "cross_trainer": {
+      "name": "Cross trainer"
+    },
+    "rower": {
+      "name": "Rower"
+    },
+    "indoor_bike": {
+      "name": "Indoor bike"
+    }
+  },
+  "exceptions": {
+    "device_not_found": {
+      "message": "Fitness machine not found. Make sure it is turned on and not in use by another application."
+    },
+    "connection_failed": {
+      "message": "Failed connect to Fitness machine. Make sure it is turned on and not in use by another application."
+    },
+    "ftms_error": {
+      "message": "Fitness device probably switched to another protocol, such as FitShow. Try reboot your device."
+    }
+  }
+}

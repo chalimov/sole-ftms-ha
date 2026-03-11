@@ -1,0 +1,22 @@
+{
+  "domain": "ftms",
+  "name": "Fitness Machine Service",
+  "bluetooth": [
+    {
+      "service_data_uuid": "00001826-0000-1000-8000-00805f9b34fb"
+    },
+    {
+      "service_uuid": "00001826-0000-1000-8000-00805f9b34fb"
+    }
+  ],
+  "codeowners": ["@dudanov"],
+  "config_flow": true,
+  "dependencies": ["bluetooth_adapters"],
+  "documentation": "https://github.com/dudanov/hassio-ftms/blob/master/README.md",
+  "integration_type": "device",
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/dudanov/hassio-ftms/issues",
+  "loggers": ["pyftms"],
+  "requirements": ["pyftms==0.4.10"],
+  "version": "0.24.6"
+}
