@@ -239,45 +239,64 @@ class SoleClient:
     async def _start_workout(self) -> None:
         """Send full handshake to start BLE workout session.
 
-        Follows treadonme Start() flow:
-        1. UserProfile (sex, age, weight_u16_BE, height) → wait ACK
-        2. Program (Manual) → wait ACK
-        3. WorkoutTarget (time, 0, cal_hi, cal_lo) → wait ACK
-        4. SetWorkoutMode (Start) → wait SetWorkoutMode echo
+        Follows treadonme Start() flow with simulated disconnect/reconnect:
+        1. Send handshake (UserProfile, Program, WorkoutTarget, SetWorkoutMode)
+        2. Unsubscribe from notifications (simulate disconnect)
+        3. Wait 5 seconds
+        4. Re-subscribe to notifications (simulate reconnect)
         5. Request DeviceInfo
         """
         if not self._cli or not self._cli.is_connected:
             return
 
         try:
-            # 1. UserProfile: Male=0x01, Age=30, Weight=155 (uint16 BE), Height=72
+            # Phase 1: Send handshake
+            _LOGGER.warning("Sole: Phase 1 - Sending handshake")
+
             await self._write(
                 _build_frame(_OP_USER_PROFILE, bytes([0x01, 30, 0x00, 155, 72])),
                 "UserProfile",
             )
-
-            # 2. Program: Manual (0x10, 0x01)
             await self._write(
                 _build_frame(_OP_PROGRAM, bytes([0x10, 0x01])),
                 "Program(Manual)",
             )
-
-            # 3. WorkoutTarget: Time=30min, 0, Calories=0
             await self._write(
                 _build_frame(_OP_WORKOUT_TARGET, bytes([30, 0x00, 0x00, 0x00])),
                 "WorkoutTarget",
             )
-
-            # 4. SetWorkoutMode: Start (0x02)
             await self._write(
                 _build_frame(_OP_SET_WORKOUT_MODE, bytes([0x02])),
                 "SetWorkoutMode(Start)",
             )
 
-            # Wait a moment for mode transition
-            await asyncio.sleep(1.0)
+            # Phase 2: Simulate disconnect by stopping notifications
+            _LOGGER.warning("Sole: Phase 2 - Simulating disconnect (stop notify)")
+            for uuid in [SOLE_NOTIFY_UUID, SOLE_NOTIFY2_UUID]:
+                char = self._cli.services.get_characteristic(uuid)
+                if char:
+                    try:
+                        await self._cli.stop_notify(char)
+                    except Exception:
+                        pass
 
-            # 5. Request DeviceInfo
+            # Phase 3: Wait (treadonme waits 5 seconds)
+            _LOGGER.warning("Sole: Phase 3 - Waiting 5 seconds")
+            await asyncio.sleep(5.0)
+
+            # Phase 4: Re-subscribe (simulate reconnect)
+            _LOGGER.warning("Sole: Phase 4 - Re-subscribing")
+            for uuid, label in [
+                (SOLE_NOTIFY_UUID, "RX"),
+                (SOLE_NOTIFY2_UUID, "2nd"),
+            ]:
+                char = self._cli.services.get_characteristic(uuid)
+                if char:
+                    await self._cli.start_notify(char, self._on_notify)
+                    _LOGGER.warning("Re-subscribed to Sole %s", label)
+
+            # Phase 5: Request DeviceInfo (as treadonme does after reconnect)
+            _LOGGER.warning("Sole: Phase 5 - Requesting DeviceInfo")
             await self._write(
                 _build_frame(_OP_DEVICE_INFO, b""),
                 "DeviceInfo",
