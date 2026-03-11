@@ -386,13 +386,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
                 _orig_set_updated(data)
                 if sole_client._activated:
                     return
-                # Log what we receive to debug activation
                 event_data = getattr(data, 'event_data', None)
                 if event_data:
-                    _LOGGER.warning("Sole trigger check: %s", event_data)
                     speed = event_data.get(_ftms_const.SPEED_INSTANT, 0)
                     if speed and speed > 0:
-                        _LOGGER.warning("Sole activating! speed=%s", speed)
+                        # Set flag synchronously to prevent duplicate calls
+                        sole_client._activated = True
                         asyncio.ensure_future(sole_client.activate())
 
             coordinator.async_set_updated_data = _set_updated_with_sole_trigger
