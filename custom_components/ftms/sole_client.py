@@ -29,11 +29,21 @@ _END = 0x5D
 
 # Opcodes
 _OP_ACK = 0x00
+_OP_SET_WORKOUT_MODE = 0x02
+_OP_WORKOUT_MODE = 0x03
 _OP_WORKOUT_DATA = 0x06
+_OP_USER_PROFILE = 0x07
+_OP_PROGRAM = 0x08
 _OP_SPEED = 0x11
 _OP_INCLINE = 0x12
 _OP_HEART_RATE = 0x15
 _OP_DEVICE_INFO = 0xF0
+_OP_COMMAND = 0xF1
+
+# Workout modes
+_WM_IDLE = 0x01
+_WM_START = 0x02
+_WM_RUNNING = 0x04
 
 # Opcodes that should be acknowledged
 _ACK_OPCODES = {
@@ -48,10 +58,15 @@ def has_sole_service(cli: BleakClient) -> bool:
     return cli.services.get_service(SOLE_SERVICE_UUID) is not None
 
 
+def _build_frame(opcode: int, data: bytes = b"") -> bytes:
+    """Build a framed Sole message."""
+    length = 1 + len(data)  # opcode + data
+    return bytes([_START, length, opcode]) + data + bytes([_END])
+
+
 def _build_ack(opcode: int) -> bytes:
     """Build an ACK frame for a received opcode."""
-    # [0x5B, length=4, 0x00(ACK), echoed_opcode, 0x4F('O'), 0x4B('K'), 0x5D]
-    return bytes([_START, 0x04, _OP_ACK, opcode, 0x4F, 0x4B, _END])
+    return _build_frame(_OP_ACK, bytes([opcode, 0x4F, 0x4B]))
 
 
 def _parse_frame(raw: bytes) -> tuple[int, bytes] | None:
@@ -146,6 +161,9 @@ class SoleClient:
         self._subscribed = True
         _LOGGER.info("Subscribed to Sole proprietary notifications")
 
+        # Send init sequence to trigger data flow
+        await self._init_handshake()
+
     def reset(self) -> None:
         """Reset state on disconnect."""
         self._subscribed = False
@@ -195,6 +213,37 @@ class SoleClient:
         if update:
             event = UpdateEvent(event_id="update", event_data=update)
             self._cb(event)
+
+    async def _init_handshake(self) -> None:
+        """Send minimal init sequence to trigger Sole data flow.
+
+        The treadonme library sends: UserProfile, Program, WorkoutTarget,
+        SetWorkoutMode(Start). We send a subset to activate data without
+        interfering with an already-running workout.
+        """
+        if not self._cli or not self._cli.is_connected:
+            return
+
+        try:
+            # 1. Send UserProfile: male=0, age=30, weight=155(lbs), height=72(in)
+            profile = _build_frame(_OP_USER_PROFILE, bytes([0x00, 30, 155, 72]))
+            await self._cli.write_gatt_char(SOLE_WRITE_UUID, profile, response=False)
+            _LOGGER.warning("Sent Sole UserProfile")
+            await asyncio.sleep(0.5)
+
+            # 2. Send Program: Manual mode (0x10, 0x01)
+            program = _build_frame(_OP_PROGRAM, bytes([0x10, 0x01]))
+            await self._cli.write_gatt_char(SOLE_WRITE_UUID, program, response=False)
+            _LOGGER.warning("Sent Sole Program (Manual)")
+            await asyncio.sleep(0.5)
+
+            # 3. Send SetWorkoutMode: Start (0x02)
+            mode = _build_frame(_OP_SET_WORKOUT_MODE, bytes([_WM_START]))
+            await self._cli.write_gatt_char(SOLE_WRITE_UUID, mode, response=False)
+            _LOGGER.warning("Sent Sole SetWorkoutMode(Start)")
+
+        except Exception:
+            _LOGGER.warning("Sole init handshake failed", exc_info=True)
 
     async def _send_ack(self, opcode: int) -> None:
         """Send ACK to the treadmill."""
