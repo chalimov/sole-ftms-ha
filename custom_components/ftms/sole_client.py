@@ -254,8 +254,21 @@ class SoleClient:
             # Command(Start) triggers WorkoutData streaming on F63
             await self._write(_build_frame(_OP_COMMAND, bytes([0x01])))
 
+            # Test: send a dummy HR to see if treadmill displays it
+            await asyncio.sleep(2.0)
+            await self.send_heart_rate(120)
+
         except Exception:
             _LOGGER.warning("Sole start workout failed", exc_info=True)
+
+    async def send_heart_rate(self, hr: int) -> None:
+        """Send heart rate value to the treadmill for display."""
+        if not self._cli or not self._cli.is_connected:
+            return
+        hr = max(0, min(255, int(hr)))
+        frame = _build_frame(_OP_HEART_RATE, bytes([hr]))
+        await self._cli.write_gatt_char(SOLE_WRITE_UUID, frame, response=False)
+        _LOGGER.debug("Sole HR TX: %d bpm", hr)
 
     async def _write(self, data: bytes) -> None:
         """Write data to the Sole write characteristic."""
