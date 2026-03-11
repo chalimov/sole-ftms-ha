@@ -365,13 +365,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
     _is_conn = ftms.is_connected if _has_cli else False
     if _has_cli and _is_conn:
         _svcs = [str(s.uuid) for s in ftms._cli.services]
-        _LOGGER.info("BLE services discovered: %s", _svcs)
-        _LOGGER.info("Looking for Sole service %s: %s", _SOLE_SVC, has_sole_service(ftms._cli))
+        _LOGGER.warning("BLE services discovered: %s", _svcs)
+        _LOGGER.warning("Looking for Sole service %s: %s", _SOLE_SVC, has_sole_service(ftms._cli))
     else:
-        _LOGGER.info("FTMS client state: has_cli=%s, connected=%s", _has_cli, _is_conn)
+        _LOGGER.warning("FTMS client state: has_cli=%s, connected=%s", _has_cli, _is_conn)
 
     if _has_cli and _is_conn and has_sole_service(ftms._cli):
-        _LOGGER.info("Sole proprietary service detected, subscribing")
+        _LOGGER.warning("Sole proprietary service detected, subscribing")
 
         def _on_sole_event(event):
             _LOGGER.debug(f"Sole event: {event}")
