@@ -220,6 +220,24 @@ class SoleClient:
             _LOGGER.warning("Sole activation failed", exc_info=True)
             self._activated = False
 
+    async def deactivate(self) -> None:
+        """Send Command(Stop) to cleanly exit the Sole protocol session."""
+        if not self._cli or not self._cli.is_connected:
+            return
+
+        _LOGGER.info("Sole: deactivating protocol (sending Command Stop)")
+        self._activated = False
+
+        try:
+            frame = _build_frame(_OP_COMMAND, bytes([0x02]))  # Stop
+            await asyncio.wait_for(
+                self._cli.write_gatt_char(SOLE_WRITE_UUID, frame, response=False),
+                timeout=5.0,
+            )
+            _LOGGER.info("Sole: deactivation complete, now passive")
+        except Exception:
+            _LOGGER.warning("Sole deactivation failed", exc_info=True)
+
     def reset(self) -> None:
         """Reset state on disconnect."""
         self._subscribed = False

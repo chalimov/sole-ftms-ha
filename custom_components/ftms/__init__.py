@@ -396,8 +396,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
                 if speed > 0 and not sole_client._activated:
                     _do_activate()
                 elif speed == 0 and sole_client._activated:
-                    sole_client._activated = False
-                    _LOGGER.info("Sole: deactivated (speed=0), now passive")
+                    hass.async_create_task(sole_client.deactivate())
 
             coordinator.async_set_updated_data = _set_updated_with_sole_trigger
 
