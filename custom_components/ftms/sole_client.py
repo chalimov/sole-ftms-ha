@@ -237,25 +237,20 @@ class SoleClient:
             self._cb(event)
 
     async def _start_workout(self) -> None:
-        """Initialize Sole protocol and trigger workout data streaming.
+        """Initialize Sole protocol — passive mode.
 
-        Flow: DeviceInfo → wait for WorkoutMode echo to settle → Command(Start).
+        Only request DeviceInfo to complete the handshake. Do NOT send
+        Command(Start) as that hijacks the treadmill's manual controls.
+        WorkoutData will stream once the user starts a workout on the treadmill.
         """
         if not self._cli or not self._cli.is_connected:
             return
 
         try:
-            # Request device info (also triggers WorkoutMode exchange)
+            # Request device info (triggers WorkoutMode exchange)
             await self._write(_build_frame(_OP_DEVICE_INFO, b""))
-
-            # Wait for WorkoutMode echo exchange to settle
-            await asyncio.sleep(3.0)
-
-            # Command(Start) triggers WorkoutData streaming on F63
-            await self._write(_build_frame(_OP_COMMAND, bytes([0x01])))
-
         except Exception:
-            _LOGGER.warning("Sole start workout failed", exc_info=True)
+            _LOGGER.warning("Sole handshake failed", exc_info=True)
 
     async def _write(self, data: bytes) -> None:
         """Write data to the Sole write characteristic."""
