@@ -176,11 +176,8 @@ class SoleClient:
 
         self._subscribed = True
 
-        # Just request DeviceInfo — workout is already running via physical button
-        await self._write(
-            _build_frame(_OP_DEVICE_INFO, b""),
-            "DeviceInfo",
-        )
+        # Full handshake to start BLE workout session (matches treadonme Start())
+        await self._start_workout()
 
     def reset(self) -> None:
         """Reset state on disconnect."""
@@ -248,6 +245,56 @@ class SoleClient:
         if update:
             event = UpdateEvent(event_id="update", event_data=update)
             self._cb(event)
+
+    async def _start_workout(self) -> None:
+        """Send full handshake to start BLE workout session.
+
+        Follows treadonme Start() flow:
+        1. UserProfile (sex, age, weight_u16_BE, height) → wait ACK
+        2. Program (Manual) → wait ACK
+        3. WorkoutTarget (time, 0, cal_hi, cal_lo) → wait ACK
+        4. SetWorkoutMode (Start) → wait SetWorkoutMode echo
+        5. Request DeviceInfo
+        """
+        if not self._cli or not self._cli.is_connected:
+            return
+
+        try:
+            # 1. UserProfile: Male=0x01, Age=30, Weight=155 (uint16 BE), Height=72
+            await self._write(
+                _build_frame(_OP_USER_PROFILE, bytes([0x01, 30, 0x00, 155, 72])),
+                "UserProfile",
+            )
+
+            # 2. Program: Manual (0x10, 0x01)
+            await self._write(
+                _build_frame(_OP_PROGRAM, bytes([0x10, 0x01])),
+                "Program(Manual)",
+            )
+
+            # 3. WorkoutTarget: Time=30min, 0, Calories=0
+            await self._write(
+                _build_frame(_OP_WORKOUT_TARGET, bytes([30, 0x00, 0x00, 0x00])),
+                "WorkoutTarget",
+            )
+
+            # 4. SetWorkoutMode: Start (0x02)
+            await self._write(
+                _build_frame(_OP_SET_WORKOUT_MODE, bytes([0x02])),
+                "SetWorkoutMode(Start)",
+            )
+
+            # Wait a moment for mode transition
+            await asyncio.sleep(1.0)
+
+            # 5. Request DeviceInfo
+            await self._write(
+                _build_frame(_OP_DEVICE_INFO, b""),
+                "DeviceInfo",
+            )
+
+        except Exception:
+            _LOGGER.warning("Sole start workout failed", exc_info=True)
 
     async def _write(self, data: bytes, label: str = "") -> None:
         """Write data to the Sole write characteristic with delay."""
