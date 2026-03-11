@@ -254,41 +254,8 @@ class SoleClient:
             # Command(Start) triggers WorkoutData streaming on F63
             await self._write(_build_frame(_OP_COMMAND, bytes([0x01])))
 
-            # Test: set HR type to "external" then send dummy HR=120
-            await asyncio.sleep(2.0)
-            await self._send_hr_type()
-            await asyncio.sleep(1.0)
-            await self.send_heart_rate(120)
-
         except Exception:
             _LOGGER.warning("Sole start workout failed", exc_info=True)
-
-    async def _send_hr_type(self) -> None:
-        """Tell the treadmill to expect external HR data (HRType opcode 0x09)."""
-        if not self._cli or not self._cli.is_connected:
-            return
-        # HRType message: Type1=1 (external), Type2=0
-        frame = _build_frame(_OP_HR_TYPE, bytes([0x01, 0x00]))
-        try:
-            await self._cli.write_gatt_char(SOLE_WRITE_UUID, frame, response=True)
-            _LOGGER.warning("Sole HRType TX (external): %s", frame.hex(" "))
-        except Exception:
-            _LOGGER.warning("Sole HRType TX failed, trying without response", exc_info=True)
-            await self._cli.write_gatt_char(SOLE_WRITE_UUID, frame, response=False)
-
-    async def send_heart_rate(self, hr: int) -> None:
-        """Send heart rate value to the treadmill for display."""
-        if not self._cli or not self._cli.is_connected:
-            return
-        hr = max(0, min(255, int(hr)))
-        frame = _build_frame(_OP_HEART_RATE, bytes([hr]))
-        try:
-            await self._cli.write_gatt_char(SOLE_WRITE_UUID, frame, response=True)
-            _LOGGER.warning("Sole HR TX: %d bpm (with response)", hr)
-        except Exception:
-            _LOGGER.warning("Sole HR TX with response failed, trying without", exc_info=True)
-            await self._cli.write_gatt_char(SOLE_WRITE_UUID, frame, response=False)
-            _LOGGER.warning("Sole HR TX: %d bpm (without response)", hr)
 
     async def _write(self, data: bytes) -> None:
         """Write data to the Sole write characteristic."""
