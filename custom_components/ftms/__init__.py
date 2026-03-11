@@ -1,6 +1,5 @@
 """The FTMS integration."""
 
-import asyncio
 import io
 import logging
 from types import MappingProxyType
@@ -395,7 +394,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
                 if event_data:
                     speed = event_data.get(_ftms_const.SPEED_INSTANT, 0)
                     if speed and speed > 0:
-                        _LOGGER.warning("Sole: activating (speed=%s)", speed)
                         _do_activate()
 
             coordinator.async_set_updated_data = _set_updated_with_sole_trigger
@@ -403,7 +401,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
             # Check if FTMS already reports speed > 0 (workout already running)
             current_speed = ftms.get_property(_ftms_const.SPEED_INSTANT)
             if current_speed and current_speed > 0:
-                _LOGGER.warning("Sole: FTMS already has speed=%s, activating now", current_speed)
                 _do_activate()
     # --- End Sole support ---
 

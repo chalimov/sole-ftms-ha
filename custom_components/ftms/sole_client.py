@@ -203,29 +203,26 @@ class SoleClient:
         if not self._cli or not self._cli.is_connected:
             return
 
-        _LOGGER.warning("Sole: activating protocol (workout detected via FTMS)")
+        _LOGGER.info("Sole: activating protocol (workout detected via FTMS)")
 
         try:
             # DeviceInfo triggers WorkoutMode exchange
-            _LOGGER.warning("Sole: sending DeviceInfo...")
             frame = _build_frame(_OP_DEVICE_INFO, b"")
             await asyncio.wait_for(
                 self._cli.write_gatt_char(SOLE_WRITE_UUID, frame, response=False),
                 timeout=5.0,
             )
-            _LOGGER.warning("Sole: DeviceInfo sent OK")
 
             # Wait for WorkoutMode echo exchange to settle
             await asyncio.sleep(3.0)
 
             # Command(Start) triggers WorkoutData streaming
-            _LOGGER.warning("Sole: sending Command(Start)...")
             frame = _build_frame(_OP_COMMAND, bytes([0x01]))
             await asyncio.wait_for(
                 self._cli.write_gatt_char(SOLE_WRITE_UUID, frame, response=False),
                 timeout=5.0,
             )
-            _LOGGER.warning("Sole: activation complete, data should stream now")
+            _LOGGER.info("Sole: activation complete, data streaming")
         except asyncio.TimeoutError:
             _LOGGER.warning("Sole activation timed out on BLE write")
             self._activated = False
