@@ -260,7 +260,7 @@ class SoleClient:
             elif opcode in _STANDARD_ACK_OPCODES:
                 asyncio.ensure_future(self._send_ack(opcode))
 
-        # EndWorkout — zero out sensors
+        # EndWorkout — deactivate and zero out sensors
         if opcode == _OP_END_WORKOUT:
             self._activated = False
             update = {

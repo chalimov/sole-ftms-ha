@@ -1,5 +1,6 @@
 """The FTMS integration."""
 
+import asyncio
 import io
 import logging
 from types import MappingProxyType
@@ -383,6 +384,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
                 sole_client._activated = True
                 hass.async_create_task(sole_client.activate())
 
+            async def _do_disconnect_reconnect():
+                """Disconnect and reconnect BLE to release treadmill buttons."""
+                sole_client._activated = False
+                sole_client.reset()
+                try:
+                    _LOGGER.info("Sole: disconnecting BLE to release buttons")
+                    await ftms.disconnect()
+                    await asyncio.sleep(2.0)
+                    _LOGGER.info("Sole: reconnecting BLE")
+                    await ftms.connect()
+                    # Re-subscribe Sole on the new connection
+                    if hasattr(ftms, '_cli') and ftms.is_connected and has_sole_service(ftms._cli):
+                        await sole_client.subscribe(ftms._cli)
+                        _LOGGER.info("Sole: reconnected and re-subscribed (passive)")
+                except Exception:
+                    _LOGGER.warning("Sole: disconnect/reconnect failed, scheduling reload", exc_info=True)
+                    hass.config_entries.async_schedule_reload(entry.entry_id)
+
             @callback
             def _set_updated_with_sole_trigger(data):
                 _orig_set_updated(data)
@@ -395,13 +414,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
                 if speed > 0 and not sole_client._activated:
                     _do_activate()
                 elif speed == 0 and sole_client._activated:
-                    # Disconnect raw BLE to release treadmill from protocol mode
-                    # This triggers the "unexpected disconnect" path which auto-reloads
-                    _LOGGER.info("Sole: workout ended, disconnecting BLE to release buttons")
-                    sole_client._activated = False
-                    sole_client.reset()
-                    if hasattr(ftms, '_cli') and ftms._cli and ftms._cli.is_connected:
-                        hass.async_create_task(ftms._cli.disconnect())
+                    hass.async_create_task(_do_disconnect_reconnect())
 
             coordinator.async_set_updated_data = _set_updated_with_sole_trigger
 
