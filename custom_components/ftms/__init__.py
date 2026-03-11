@@ -395,11 +395,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
                 if speed > 0 and not sole_client._activated:
                     _do_activate()
                 elif speed == 0 and sole_client._activated:
-                    # Reload integration to force BLE disconnect/reconnect
-                    # — only way to release treadmill from protocol mode
-                    _LOGGER.info("Sole: workout ended, reloading integration to release buttons")
+                    # Disconnect BLE to release treadmill from protocol mode
+                    # The disconnect handler will auto-reconnect fresh (passive)
+                    _LOGGER.info("Sole: workout ended, disconnecting BLE to release buttons")
                     sole_client._activated = False
-                    hass.config_entries.async_schedule_reload(entry.entry_id)
+                    hass.async_create_task(ftms.disconnect())
 
             coordinator.async_set_updated_data = _set_updated_with_sole_trigger
 
