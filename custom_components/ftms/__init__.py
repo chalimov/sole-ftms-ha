@@ -357,11 +357,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
         _LOGGER.info("No sensors configured, using all available: %s", sensors)
 
     # --- Sole proprietary protocol support ---
-    from .sole_client import SoleClient, has_sole_service
+    from .sole_client import SoleClient, has_sole_service, SOLE_SERVICE_UUID as _SOLE_SVC
     from pyftms.client import const as _ftms_const
 
     sole_client = None
-    if hasattr(ftms, '_cli') and ftms.is_connected and has_sole_service(ftms._cli):
+    _has_cli = hasattr(ftms, '_cli')
+    _is_conn = ftms.is_connected if _has_cli else False
+    if _has_cli and _is_conn:
+        _svcs = [str(s.uuid) for s in ftms._cli.services]
+        _LOGGER.info("BLE services discovered: %s", _svcs)
+        _LOGGER.info("Looking for Sole service %s: %s", _SOLE_SVC, has_sole_service(ftms._cli))
+    else:
+        _LOGGER.info("FTMS client state: has_cli=%s, connected=%s", _has_cli, _is_conn)
+
+    if _has_cli and _is_conn and has_sole_service(ftms._cli):
         _LOGGER.info("Sole proprietary service detected, subscribing")
 
         def _on_sole_event(event):
