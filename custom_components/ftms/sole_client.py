@@ -161,6 +161,7 @@ class SoleClient:
         self._cb = callback
         self._subscribed = False
         self._cli: BleakClient | None = None
+        self._data_started = False  # True once Command(Start) sent
 
     async def subscribe(self, cli: BleakClient) -> None:
         """Subscribe to Sole notifications on an existing BleakClient."""
@@ -192,6 +193,7 @@ class SoleClient:
         """Reset state on disconnect."""
         self._subscribed = False
         self._cli = None
+        self._data_started = False
 
     def _on_notify(self, _char: BleakGATTCharacteristic, data: bytearray) -> None:
         """Handle incoming Sole notification."""
@@ -226,10 +228,23 @@ class SoleClient:
         # WorkoutMode (0x03) is SPECIAL: echo it back (not standard ACK)
         if opcode == _OP_WORKOUT_MODE and self._cli is not None:
             asyncio.ensure_future(self._echo_raw(bytes(data)))
+            # If workout just started (mode != Idle/0x01), trigger data streaming
+            if not self._data_started and len(payload) >= 1 and payload[0] != 0x01:
+                self._data_started = True
+                asyncio.ensure_future(self._trigger_data_stream())
 
         # Standard ACK for data messages
         elif opcode in _STANDARD_ACK_OPCODES and self._cli is not None:
             asyncio.ensure_future(self._send_ack(opcode))
+
+        # EndWorkout (0x32) — reset state and zero out sensors
+        if opcode == _OP_END_WORKOUT:
+            self._data_started = False
+            update = {
+                c.SPEED_INSTANT: 0.0,
+                c.INCLINATION: 0.0,
+                c.HEART_RATE: 0,
+            }
 
         # Fire update event
         if update:
@@ -237,11 +252,10 @@ class SoleClient:
             self._cb(event)
 
     async def _start_workout(self) -> None:
-        """Initialize Sole protocol — passive mode.
+        """Initialize Sole protocol — handshake only.
 
-        Only request DeviceInfo to complete the handshake. Do NOT send
-        Command(Start) as that hijacks the treadmill's manual controls.
-        WorkoutData will stream once the user starts a workout on the treadmill.
+        Sends DeviceInfo to complete the handshake. Command(Start) is deferred
+        until we detect the user has started a workout (WorkoutMode != Idle).
         """
         if not self._cli or not self._cli.is_connected:
             return
@@ -251,6 +265,21 @@ class SoleClient:
             await self._write(_build_frame(_OP_DEVICE_INFO, b""))
         except Exception:
             _LOGGER.warning("Sole handshake failed", exc_info=True)
+
+    async def _trigger_data_stream(self) -> None:
+        """Send Command(Start) to trigger WorkoutData streaming.
+
+        Called when we detect the user started a workout on the treadmill.
+        """
+        if not self._cli or not self._cli.is_connected:
+            return
+
+        try:
+            _LOGGER.info("Sole: workout detected, triggering data stream")
+            await asyncio.sleep(1.0)
+            await self._write(_build_frame(_OP_COMMAND, bytes([0x01])))
+        except Exception:
+            _LOGGER.warning("Sole trigger data stream failed", exc_info=True)
 
     async def _write(self, data: bytes) -> None:
         """Write data to the Sole write characteristic."""
