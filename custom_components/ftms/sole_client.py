@@ -18,10 +18,11 @@ from pyftms.client.backends.event import UpdateEvent, UpdateEventData
 
 _LOGGER = logging.getLogger(__name__)
 
-# Sole proprietary BLE UUIDs
+# Sole proprietary BLE UUIDs (Microchip Transparent UART)
 SOLE_SERVICE_UUID = "49535343-fe7d-4ae5-8fa9-9fafd205e455"
-SOLE_NOTIFY_UUID = "49535343-1e4d-4bd9-ba61-23c647249616"
-SOLE_WRITE_UUID = "49535343-8841-43f4-a8d4-ecbe34729bb3"
+SOLE_NOTIFY_UUID = "49535343-1e4d-4bd9-ba61-23c647249616"   # RX (main notify)
+SOLE_NOTIFY2_UUID = "49535343-4c8a-39b3-2f49-511cff073b7e"  # 2nd notify char
+SOLE_WRITE_UUID = "49535343-8841-43f4-a8d4-ecbe34729bb3"     # TX (write)
 
 # Message framing
 _START = 0x5B
@@ -159,10 +160,22 @@ class SoleClient:
         self._cli = cli
         await cli.start_notify(notify_char, self._on_notify)
         self._subscribed = True
-        _LOGGER.warning("Subscribed to Sole notifications, starting handshake")
+        _LOGGER.warning("Subscribed to Sole RX notify")
+
+        # Also subscribe to the 2nd notify characteristic if present
+        notify2 = cli.services.get_characteristic(SOLE_NOTIFY2_UUID)
+        if notify2:
+            await cli.start_notify(notify2, self._on_notify)
+            _LOGGER.warning("Subscribed to Sole 2nd notify char")
 
         # Run handshake to trigger data flow
         await self._init_handshake()
+
+        # Also try requesting device info
+        await self._write(
+            _build_frame(_OP_DEVICE_INFO, b""),
+            "DeviceInfo request",
+        )
 
     def reset(self) -> None:
         """Reset state on disconnect."""
@@ -200,7 +213,7 @@ class SoleClient:
             _LOGGER.debug("Sole ACK received: %s", payload.hex(" "))
 
         else:
-            _LOGGER.debug("Sole opcode 0x%02X: %s", opcode, payload.hex(" "))
+            _LOGGER.warning("Sole opcode 0x%02X: %s", opcode, payload.hex(" "))
 
         # Send ACK for data messages
         if opcode in _ACK_OPCODES and self._cli is not None:
@@ -255,8 +268,8 @@ class SoleClient:
     async def _write(self, data: bytes, label: str = "") -> None:
         """Write data to the Sole write characteristic with delay."""
         if self._cli and self._cli.is_connected:
+            _LOGGER.warning("Sole TX %s: %s", label, data.hex(" ").upper())
             await self._cli.write_gatt_char(SOLE_WRITE_UUID, data, response=False)
-            _LOGGER.debug("Sent Sole %s: %s", label, data.hex(" ").upper())
             await asyncio.sleep(0.5)
 
     async def _send_ack(self, opcode: int) -> None:
