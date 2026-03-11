@@ -149,7 +149,7 @@
         "name": "Time elapsed"
       },
       "time_remaining": {
-        "name": "Time remaining"
+        "name": "Workout time"
       },
       "training_status": {
         "name": "Status",
@@ -242,7 +242,7 @@
         "stroke_rate_average": "Stroke rate average",
         "stroke_rate_instant": "Stroke rate",
         "time_elapsed": "Time elapsed",
-        "time_remaining": "Time remaining",
+        "time_remaining": "Workout time",
         "training_status": "Training status"
       }
     },

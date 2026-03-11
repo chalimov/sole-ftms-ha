@@ -228,9 +228,7 @@ _TIME_ELAPSED = SensorEntityDescription(
 
 _TIME_REMAINING = SensorEntityDescription(
     key=c.TIME_REMAINING,
-    device_class=SensorDeviceClass.DURATION,
-    native_unit_of_measurement=UnitOfTime.SECONDS,
-    state_class=SensorStateClass.MEASUREMENT,
+    icon="mdi:timer-outline",
 )
 
 _TRAINING_STATUS = SensorEntityDescription(
@@ -320,6 +318,11 @@ class FtmsSensorEntity(FtmsEntity, SensorEntity):
         if e.event_id == "update" and (value := e.event_data.get(self.key)) is not None:
             if isinstance(value, Enum):
                 value = value.name.lower()
+
+            # Format time_remaining as MM:SS
+            if self.key == c.TIME_REMAINING and isinstance(value, (int, float)):
+                total = int(value)
+                value = f"{total // 60}:{total % 60:02d}"
 
             self._attr_native_value = value
             self.async_write_ha_state()
