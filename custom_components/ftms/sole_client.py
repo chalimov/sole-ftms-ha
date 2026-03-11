@@ -164,8 +164,9 @@ class SoleClient:
        which releases the treadmill from protocol mode
     """
 
-    def __init__(self, callback: SoleCallback) -> None:
+    def __init__(self, callback: SoleCallback, on_workout_end: Callable[[], None] | None = None) -> None:
         self._cb = callback
+        self._on_workout_end = on_workout_end
         self._subscribed = False
         self._cli: BleakClient | None = None
         self._activated = False
@@ -260,7 +261,7 @@ class SoleClient:
             elif opcode in _STANDARD_ACK_OPCODES:
                 asyncio.ensure_future(self._send_ack(opcode))
 
-        # EndWorkout — deactivate and zero out sensors
+        # EndWorkout — zero out sensors and notify caller to disconnect
         if opcode == _OP_END_WORKOUT:
             self._activated = False
             update = {
@@ -268,6 +269,8 @@ class SoleClient:
                 c.INCLINATION: 0.0,
                 c.HEART_RATE: 0,
             }
+            if self._on_workout_end:
+                self._on_workout_end()
 
         if update:
             event = UpdateEvent(event_id="update", event_data=update)
