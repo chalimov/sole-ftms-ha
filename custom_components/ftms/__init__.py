@@ -1,5 +1,6 @@
 """The FTMS integration."""
 
+import asyncio
 import io
 import logging
 from types import MappingProxyType
