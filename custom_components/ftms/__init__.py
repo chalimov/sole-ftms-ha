@@ -142,7 +142,78 @@ async def _patched_read_features(cli, mt):
 # Apply the monkey-patch to both the module and the client that imported it by name
 _pyftms_features.read_features = _patched_read_features
 _pyftms_client.read_features = _patched_read_features
-# --- End monkey-patch ---
+
+
+# --- Monkey-patch realtime data parser to tolerate non-standard packets ---
+from pyftms.models.realtime_data.common import RealtimeData as _RealtimeData
+from pyftms.client.backends import updater as _pyftms_updater
+
+
+def _patched_on_notify(self, _c, data):
+    """Patched _on_notify that handles non-standard realtime data."""
+    _LOGGER.debug("Received notify: %s", data.hex(" ").upper())
+    try:
+        data_ = self._serializer.deserialize(data)._asdict()
+    except (AssertionError, EOFError, Exception) as exc:
+        _LOGGER.debug("Failed to parse notify data (%s), trying tolerant parse", exc)
+        try:
+            data_ = _tolerant_deserialize(self._serializer, data)
+        except Exception as exc2:
+            _LOGGER.warning("Could not parse notify data at all: %s", exc2)
+            return
+    _LOGGER.debug("Received notify dict: %s", data_)
+    self._result |= data_
+
+    if data[0] & 1:
+        _LOGGER.debug("'More Data' bit is set. Waiting for next data.")
+        return
+
+    if any(self._result.values()):
+        update = self._result.items() ^ self._prev.items()
+
+        if update := {k: self._result[k] for k, _ in update}:
+            _LOGGER.debug("Update data: %s", update)
+            from pyftms.client.backends.event import UpdateEvent, UpdateEventData
+            from typing import cast
+            update = cast(UpdateEventData, update)
+            update = UpdateEvent(event_id="update", event_data=update)
+            self._cb(update)
+            self._prev = self._result.copy()
+
+    self._result.clear()
+
+
+def _tolerant_deserialize(serializer, data):
+    """Parse realtime data tolerantly — ignore trailing bytes and stop on EOF."""
+    from pyftms.serializer import get_serializer
+    src = io.BytesIO(data)
+
+    # Read the 2-byte flags field
+    mask = get_serializer("u2").deserialize(src)
+    kwargs = {"mask": mask}
+    mask ^= 1  # invert bit 0 (More Data)
+
+    model_cls = serializer._cls
+    for field, field_ser in model_cls._iter_fields_serializers():
+        if mask & 1:
+            try:
+                kwargs[field.name] = field_ser.deserialize(src)
+            except (EOFError, Exception):
+                _LOGGER.debug("EOF/error reading field %s, stopping", field.name)
+                break
+        mask >>= 1
+        if not mask:
+            break
+
+    remaining = src.read()
+    if remaining:
+        _LOGGER.debug("Ignoring %d trailing bytes in notify data", len(remaining))
+
+    return model_cls(**kwargs)
+
+
+_pyftms_updater.DataUpdater._on_notify = _patched_on_notify
+# --- End realtime data monkey-patch ---
 
 
 def _get_client_safe(device, advertisement, **kwargs):
@@ -234,13 +305,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
         **device_info_kwargs,
     )
 
+    sensors = entry.options.get(CONF_SENSORS, [])
+    if not sensors:
+        sensors = list(ftms.available_properties)
+        _LOGGER.info("No sensors configured, using all available: %s", sensors)
+
     entry.runtime_data = FtmsData(
         entry_id=entry.entry_id,
         unique_id=unique_id,
         device_info=device_info,
         ftms=ftms,
         coordinator=coordinator,
-        sensors=entry.options[CONF_SENSORS],
+        sensors=sensors,
     )
 
     @callback
