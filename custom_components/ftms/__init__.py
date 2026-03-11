@@ -382,6 +382,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
             # Watch coordinator updates for speed > 0 to activate Sole protocol
             _orig_set_updated = coordinator.async_set_updated_data
 
+            def _do_activate():
+                sole_client._activated = True
+                hass.async_create_task(sole_client.activate())
+
             @callback
             def _set_updated_with_sole_trigger(data):
                 _orig_set_updated(data)
@@ -389,19 +393,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
                     return
                 event_data = getattr(data, 'event_data', None)
                 if event_data:
-                    _LOGGER.warning("Sole trigger: keys=%s, looking for '%s'",
-                                    list(event_data.keys()), _ftms_const.SPEED_INSTANT)
-                    # Try both the constant and any key containing 'speed'
                     speed = event_data.get(_ftms_const.SPEED_INSTANT, 0)
-                    if not speed:
-                        for k, v in event_data.items():
-                            if 'speed' in str(k).lower() and v and v > 0:
-                                speed = v
-                                break
                     if speed and speed > 0:
-                        sole_client._activated = True
-                        _LOGGER.warning("Sole: activating! speed=%s", speed)
-                        asyncio.ensure_future(sole_client.activate())
+                        _LOGGER.warning("Sole: activating (speed=%s)", speed)
+                        _do_activate()
 
             coordinator.async_set_updated_data = _set_updated_with_sole_trigger
 
@@ -409,8 +404,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
             current_speed = ftms.get_property(_ftms_const.SPEED_INSTANT)
             if current_speed and current_speed > 0:
                 _LOGGER.warning("Sole: FTMS already has speed=%s, activating now", current_speed)
-                sole_client._activated = True
-                asyncio.ensure_future(sole_client.activate())
+                _do_activate()
     # --- End Sole support ---
 
     entry.runtime_data = FtmsData(
