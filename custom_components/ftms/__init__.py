@@ -374,9 +374,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
             sole_client = None
 
         if sole_client is not None:
-            for s in SOLE_SENSORS:
-                if s not in sensors:
-                    sensors.append(s)
+            # Override sensor list — only keep sensors that actually provide data
+            sensors = list(SOLE_SENSORS)
     # --- End Sole support ---
 
     entry.runtime_data = FtmsData(
