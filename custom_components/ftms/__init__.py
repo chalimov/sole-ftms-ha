@@ -378,23 +378,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
             # Override sensor list — only keep sensors that actually provide data
             sensors = list(SOLE_SENSORS)
 
-            # Watch FTMS updates for speed > 0 to activate Sole protocol
-            _orig_ftms_cb = ftms._callback
+            # Watch coordinator updates for speed > 0 to activate Sole protocol
+            _orig_set_updated = coordinator.async_set_updated_data
 
-            def _ftms_cb_with_sole_trigger(data):
-                if _orig_ftms_cb:
-                    _orig_ftms_cb(data)
+            @callback
+            def _set_updated_with_sole_trigger(data):
+                _orig_set_updated(data)
                 # Check if FTMS reports speed > 0 (workout started)
+                if sole_client._activated:
+                    return
+                speed = 0
                 if hasattr(data, 'event_data'):
                     speed = data.event_data.get(_ftms_const.SPEED_INSTANT, 0)
-                elif isinstance(data, dict):
-                    speed = data.get(_ftms_const.SPEED_INSTANT, 0)
-                else:
-                    speed = 0
-                if speed and speed > 0 and not sole_client._activated:
+                if speed and speed > 0:
                     asyncio.ensure_future(sole_client.activate())
 
-            ftms.set_callback(_ftms_cb_with_sole_trigger)
+            coordinator.async_set_updated_data = _set_updated_with_sole_trigger
     # --- End Sole support ---
 
     entry.runtime_data = FtmsData(
