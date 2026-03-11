@@ -224,22 +224,12 @@ class SoleClient:
             _LOGGER.warning("Sole ACK: %s", payload.hex(" "))
 
         # WorkoutMode (0x03) is SPECIAL: echo it back (not standard ACK)
-        # This is how treadonme handles it — the treadmill expects its own
-        # WorkoutMode message echoed back to acknowledge receipt
         if opcode == _OP_WORKOUT_MODE and self._cli is not None:
-            try:
-                asyncio.get_event_loop().create_task(
-                    self._echo_raw(bytes(data))
-                )
-            except Exception:
-                _LOGGER.debug("Failed to schedule WorkoutMode echo", exc_info=True)
+            asyncio.ensure_future(self._echo_raw(bytes(data)))
 
         # Standard ACK for data messages
         elif opcode in _STANDARD_ACK_OPCODES and self._cli is not None:
-            try:
-                asyncio.get_event_loop().create_task(self._send_ack(opcode))
-            except Exception:
-                _LOGGER.debug("Failed to schedule ACK", exc_info=True)
+            asyncio.ensure_future(self._send_ack(opcode))
 
         # Fire update event
         if update:
@@ -308,8 +298,9 @@ class SoleClient:
         try:
             if self._cli and self._cli.is_connected:
                 await self._cli.write_gatt_char(SOLE_WRITE_UUID, data, response=False)
+                _LOGGER.warning("Sole ECHO: %s", data.hex(" ").upper())
         except Exception:
-            _LOGGER.debug("Failed to echo WorkoutMode", exc_info=True)
+            _LOGGER.warning("Failed to echo WorkoutMode", exc_info=True)
 
     async def _send_ack(self, opcode: int) -> None:
         """Send standard ACK to the treadmill."""
@@ -317,5 +308,6 @@ class SoleClient:
             if self._cli and self._cli.is_connected:
                 ack = _build_ack(opcode)
                 await self._cli.write_gatt_char(SOLE_WRITE_UUID, ack, response=False)
+                _LOGGER.warning("Sole ACK TX: 0x%02X", opcode)
         except Exception:
-            _LOGGER.debug("Failed to send Sole ACK", exc_info=True)
+            _LOGGER.warning("Failed to send Sole ACK for 0x%02X", opcode, exc_info=True)
