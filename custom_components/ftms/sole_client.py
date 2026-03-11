@@ -198,7 +198,7 @@ class SoleClient:
         """Activate the Sole protocol after the user starts a workout.
 
         Called by the integration when FTMS reports speed > 0.
-        Sends DeviceInfo + Command(Start) to trigger WorkoutData streaming.
+        Sends full handshake: DeviceInfo → wait → Command(Start).
         """
         if self._activated:
             return
@@ -206,7 +206,7 @@ class SoleClient:
             return
 
         self._activated = True
-        _LOGGER.info("Sole: activating protocol (workout detected via FTMS)")
+        _LOGGER.warning("Sole: activating protocol (workout detected via FTMS)")
 
         try:
             # DeviceInfo triggers WorkoutMode exchange
@@ -217,8 +217,10 @@ class SoleClient:
 
             # Command(Start) triggers WorkoutData streaming
             await self._write(_build_frame(_OP_COMMAND, bytes([0x01])))
+            _LOGGER.warning("Sole: activation complete, data should stream now")
         except Exception:
             _LOGGER.warning("Sole activation failed", exc_info=True)
+            self._activated = False  # Allow retry
 
     def reset(self) -> None:
         """Reset state on disconnect."""
