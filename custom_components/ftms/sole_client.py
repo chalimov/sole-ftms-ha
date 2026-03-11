@@ -171,7 +171,7 @@ class SoleClient:
 
     def _on_notify(self, _char: BleakGATTCharacteristic, data: bytearray) -> None:
         """Handle incoming Sole notification."""
-        _LOGGER.warning("Sole notify: %s", data.hex(" ").upper())
+        _LOGGER.debug("Sole notify: %s", data.hex(" ").upper())
 
         parsed = _parse_frame(bytes(data))
         if parsed is None:
@@ -197,10 +197,10 @@ class SoleClient:
             _LOGGER.info("Sole DeviceInfo: %s", payload.hex(" "))
 
         elif opcode == _OP_ACK:
-            _LOGGER.warning("Sole ACK received: %s", payload.hex(" "))
+            _LOGGER.debug("Sole ACK received: %s", payload.hex(" "))
 
         else:
-            _LOGGER.warning("Sole opcode 0x%02X: %s", opcode, payload.hex(" "))
+            _LOGGER.debug("Sole opcode 0x%02X: %s", opcode, payload.hex(" "))
 
         # Send ACK for data messages
         if opcode in _ACK_OPCODES and self._cli is not None:
@@ -256,7 +256,7 @@ class SoleClient:
         """Write data to the Sole write characteristic with delay."""
         if self._cli and self._cli.is_connected:
             await self._cli.write_gatt_char(SOLE_WRITE_UUID, data, response=False)
-            _LOGGER.warning("Sent Sole %s: %s", label, data.hex(" ").upper())
+            _LOGGER.debug("Sent Sole %s: %s", label, data.hex(" ").upper())
             await asyncio.sleep(0.5)
 
     async def _send_ack(self, opcode: int) -> None:
