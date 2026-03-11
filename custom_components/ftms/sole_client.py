@@ -210,17 +210,31 @@ class SoleClient:
 
         try:
             # DeviceInfo triggers WorkoutMode exchange
-            await self._write(_build_frame(_OP_DEVICE_INFO, b""))
+            _LOGGER.warning("Sole: sending DeviceInfo...")
+            frame = _build_frame(_OP_DEVICE_INFO, b"")
+            await asyncio.wait_for(
+                self._cli.write_gatt_char(SOLE_WRITE_UUID, frame, response=False),
+                timeout=5.0,
+            )
+            _LOGGER.warning("Sole: DeviceInfo sent OK")
 
             # Wait for WorkoutMode echo exchange to settle
             await asyncio.sleep(3.0)
 
             # Command(Start) triggers WorkoutData streaming
-            await self._write(_build_frame(_OP_COMMAND, bytes([0x01])))
+            _LOGGER.warning("Sole: sending Command(Start)...")
+            frame = _build_frame(_OP_COMMAND, bytes([0x01]))
+            await asyncio.wait_for(
+                self._cli.write_gatt_char(SOLE_WRITE_UUID, frame, response=False),
+                timeout=5.0,
+            )
             _LOGGER.warning("Sole: activation complete, data should stream now")
+        except asyncio.TimeoutError:
+            _LOGGER.warning("Sole activation timed out on BLE write")
+            self._activated = False
         except Exception:
             _LOGGER.warning("Sole activation failed", exc_info=True)
-            self._activated = False  # Allow retry
+            self._activated = False
 
     def reset(self) -> None:
         """Reset state on disconnect."""
