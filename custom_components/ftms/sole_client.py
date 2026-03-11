@@ -153,7 +153,7 @@ class SoleClient:
 
     def _on_notify(self, _char: BleakGATTCharacteristic, data: bytearray) -> None:
         """Handle incoming Sole notification."""
-        _LOGGER.debug("Sole notify: %s", data.hex(" ").upper())
+        _LOGGER.warning("Sole notify: %s", data.hex(" ").upper())
 
         parsed = _parse_frame(bytes(data))
         if parsed is None:
