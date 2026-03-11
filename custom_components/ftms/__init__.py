@@ -357,15 +357,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
         _LOGGER.info("No sensors configured, using all available: %s", sensors)
 
     # --- Sole proprietary protocol support ---
-    from .sole_client import SoleClient, has_sole_service
-    from pyftms.client import const as _ftms_const
+    from .sole_client import SoleClient, has_sole_service, SOLE_SENSORS
 
     sole_client = None
     if hasattr(ftms, '_cli') and ftms.is_connected and has_sole_service(ftms._cli):
         _LOGGER.info("Sole proprietary service detected, subscribing")
 
         def _on_sole_event(event):
-            _LOGGER.debug(f"Sole event: {event}")
             coordinator.async_set_updated_data(event)
 
         sole_client = SoleClient(callback=_on_sole_event)
@@ -376,11 +374,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
             sole_client = None
 
         if sole_client is not None:
-            for s in (_ftms_const.INCLINATION, _ftms_const.DISTANCE_TOTAL,
-                      _ftms_const.ENERGY_TOTAL, _ftms_const.TIME_ELAPSED):
+            for s in SOLE_SENSORS:
                 if s not in sensors:
                     sensors.append(s)
-                    _LOGGER.debug("Added Sole sensor: %s", s)
     # --- End Sole support ---
 
     entry.runtime_data = FtmsData(
