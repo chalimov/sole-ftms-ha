@@ -7,7 +7,6 @@ data with incline, distance, calories, and other fields.
 Protocol reference: github.com/swedishborgie/treadonme
 """
 
-import asyncio
 import logging
 from typing import Callable
 
@@ -157,17 +156,13 @@ def _parse_workout_data(data: bytes) -> UpdateEventData:
 class SoleClient:
     """Client for the Sole proprietary BLE serial protocol.
 
-    Lifecycle:
-    1. subscribe() — subscribe to notify chars, stay completely silent
-    2. activate() — called when FTMS detects speed > 0
-    3. deactivate() — called when speed returns to 0, goes fully passive
+    Fully passive — subscribes to notifications and parses data, never writes
+    anything to the treadmill. This keeps the treadmill's physical buttons working.
     """
 
     def __init__(self, callback: SoleCallback) -> None:
         self._cb = callback
         self._subscribed = False
-        self._cli: BleakClient | None = None
-        self._activated = False
 
     async def subscribe(self, cli: BleakClient) -> None:
         """Subscribe to Sole notifications on an existing BleakClient."""
@@ -178,9 +173,6 @@ class SoleClient:
             _LOGGER.debug("Sole service not found, skipping")
             return
 
-        self._cli = cli
-
-        # Subscribe to BOTH notify characteristics
         for uuid, label in [
             (SOLE_NOTIFY_UUID, "RX"),
             (SOLE_NOTIFY2_UUID, "2nd"),
@@ -192,75 +184,12 @@ class SoleClient:
 
         self._subscribed = True
 
-    async def activate(self) -> None:
-        """Activate the Sole protocol (workout detected via FTMS)."""
-        if not self._cli or not self._cli.is_connected:
-            return
-
-        _LOGGER.info("Sole: activating protocol (workout detected via FTMS)")
-
-        # Re-subscribe if previously deactivated
-        if not self._subscribed:
-            await self.subscribe(self._cli)
-
-        try:
-            frame = _build_frame(_OP_DEVICE_INFO, b"")
-            await asyncio.wait_for(
-                self._cli.write_gatt_char(SOLE_WRITE_UUID, frame, response=False),
-                timeout=5.0,
-            )
-            await asyncio.sleep(3.0)
-
-            frame = _build_frame(_OP_COMMAND, bytes([0x01]))
-            await asyncio.wait_for(
-                self._cli.write_gatt_char(SOLE_WRITE_UUID, frame, response=False),
-                timeout=5.0,
-            )
-            _LOGGER.info("Sole: activation complete, data streaming")
-        except asyncio.TimeoutError:
-            _LOGGER.warning("Sole activation timed out on BLE write")
-            self._activated = False
-        except Exception:
-            _LOGGER.warning("Sole activation failed", exc_info=True)
-            self._activated = False
-
-    async def deactivate(self) -> None:
-        """Deactivate by unsubscribing from Sole notifications.
-
-        This simulates a BLE disconnect for the Sole service, which should
-        cause the treadmill to exit protocol mode and release buttons.
-        Re-subscribes on next activate().
-        """
-        self._activated = False
-
-        if not self._cli or not self._cli.is_connected:
-            return
-
-        _LOGGER.info("Sole: deactivating — unsubscribing from notifications")
-
-        for uuid, label in [
-            (SOLE_NOTIFY_UUID, "RX"),
-            (SOLE_NOTIFY2_UUID, "2nd"),
-        ]:
-            try:
-                char = self._cli.services.get_characteristic(uuid)
-                if char:
-                    await self._cli.stop_notify(char)
-                    _LOGGER.info("Unsubscribed from Sole %s notify", label)
-            except Exception:
-                _LOGGER.debug("Failed to unsubscribe Sole %s", label, exc_info=True)
-
-        self._subscribed = False
-        _LOGGER.info("Sole: deactivation complete, fully disconnected from Sole")
-
     def reset(self) -> None:
         """Reset state on disconnect."""
         self._subscribed = False
-        self._cli = None
-        self._activated = False
 
     def _on_notify(self, _char: BleakGATTCharacteristic, data: bytearray) -> None:
-        """Handle incoming Sole notification."""
+        """Handle incoming Sole notification (read-only, no writes back)."""
         parsed = _parse_frame(bytes(data))
         if parsed is None:
             _LOGGER.debug("Sole unparseable: %s", data.hex(" "))
@@ -283,49 +212,9 @@ class SoleClient:
             if payload[0] > 0:
                 update[c.HEART_RATE] = payload[0]
 
-        elif opcode == _OP_DEVICE_INFO:
-            _LOGGER.info("Sole DeviceInfo: %s", payload.hex(" "))
-
-        elif opcode == _OP_ACK:
-            _LOGGER.debug("Sole ACK: %s", payload.hex(" "))
-
         else:
             _LOGGER.debug("Sole opcode 0x%02X: %s", opcode, payload.hex(" "))
 
-        # Only respond to protocol when activated (during workout)
-        if self._activated and self._cli is not None:
-            if opcode == _OP_WORKOUT_MODE:
-                asyncio.ensure_future(self._echo_raw(bytes(data)))
-            elif opcode in _STANDARD_ACK_OPCODES:
-                asyncio.ensure_future(self._send_ack(opcode))
-
-        # EndWorkout — deactivate and zero out sensors
-        if opcode == _OP_END_WORKOUT:
-            self._activated = False
-            update = {
-                c.SPEED_INSTANT: 0.0,
-                c.INCLINATION: 0.0,
-                c.HEART_RATE: 0,
-            }
-
-        # Fire update event
         if update:
             event = UpdateEvent(event_id="update", event_data=update)
             self._cb(event)
-
-    async def _echo_raw(self, data: bytes) -> None:
-        """Echo raw frame back to the treadmill (for WorkoutMode)."""
-        try:
-            if self._cli and self._cli.is_connected:
-                await self._cli.write_gatt_char(SOLE_WRITE_UUID, data, response=False)
-        except Exception:
-            _LOGGER.debug("Failed to echo WorkoutMode", exc_info=True)
-
-    async def _send_ack(self, opcode: int) -> None:
-        """Send standard ACK to the treadmill."""
-        try:
-            if self._cli and self._cli.is_connected:
-                ack = _build_ack(opcode)
-                await self._cli.write_gatt_char(SOLE_WRITE_UUID, ack, response=False)
-        except Exception:
-            _LOGGER.debug("Failed to send Sole ACK for 0x%02X", opcode, exc_info=True)

@@ -356,13 +356,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
         sensors = list(ftms.available_properties)
         _LOGGER.info("No sensors configured, using all available: %s", sensors)
 
-    # --- Sole proprietary protocol support ---
+    # --- Sole proprietary protocol support (passive, read-only) ---
     from .sole_client import SoleClient, has_sole_service, SOLE_SENSORS
-    from pyftms.client import const as _ftms_const
 
     sole_client = None
     if hasattr(ftms, '_cli') and ftms.is_connected and has_sole_service(ftms._cli):
-        _LOGGER.info("Sole proprietary service detected, subscribing (passive until workout)")
+        _LOGGER.info("Sole proprietary service detected, subscribing (passive)")
 
         def _on_sole_event(event):
             coordinator.async_set_updated_data(event)
@@ -376,33 +375,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
 
         if sole_client is not None:
             sensors = list(SOLE_SENSORS)
-
-            # Watch for speed changes to activate/deactivate Sole protocol
-            _orig_set_updated = coordinator.async_set_updated_data
-
-            def _do_activate():
-                sole_client._activated = True
-                hass.async_create_task(sole_client.activate())
-
-            @callback
-            def _set_updated_with_sole_trigger(data):
-                _orig_set_updated(data)
-                event_data = getattr(data, 'event_data', None)
-                if not event_data:
-                    return
-                speed = event_data.get(_ftms_const.SPEED_INSTANT)
-                if speed is None:
-                    return
-                if speed > 0 and not sole_client._activated:
-                    _do_activate()
-                elif speed == 0 and sole_client._activated:
-                    hass.async_create_task(sole_client.deactivate())
-
-            coordinator.async_set_updated_data = _set_updated_with_sole_trigger
-
-            current_speed = ftms.get_property(_ftms_const.SPEED_INSTANT)
-            if current_speed and current_speed > 0:
-                _do_activate()
     # --- End Sole support ---
 
     entry.runtime_data = FtmsData(
