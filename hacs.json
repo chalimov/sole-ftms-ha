@@ -1,0 +1,5 @@
+{
+  "name": "FTMS Fitness Machine (Sole F63 compatible)",
+  "render_readme": true,
+  "homeassistant": "2025.12.0"
+}

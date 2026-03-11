@@ -1,0 +1,281 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Выбор тренажера",
+        "description": "Выберите тренажер для настройки из списка ниже.",
+        "data": {
+          "address": "Обнаруженные тренажеры:"
+        }
+      },
+      "confirm": {
+        "title": "Выбор режима обнаружения",
+        "description": "Для опроса параметров Вашего тренажера **{name}** к нему будет выполнено подключение по Bluetooth.\n\nУбедитесь, что к нему не подключено никаких устройств, например, стороннего ПО для тренировок на мобильном устройстве.\n\nВвиду того, что тренажер может не предоставлять некоторые тренировочные данные или предоставлять без значений, есть возможность попытаться определить их автоматически. Для этого необходимо в этот момент интенсивно тренироваться в режиме одной из программ. После данного этапа Вы сможете изменить эти данные.",
+        "data": {
+          "discovery": "Режим обнаружения тренировочных данных:"
+        }
+      },
+      "information": {
+        "title": "Тренировочные данные",
+        "description": "Проверьте и при необходимости измените набор тренировочных данных Вашего тренажера. Это список сенсоров, создаваемых во время инициализации устройства. Вы сможете изменить его вручную в будущем.",
+        "data": {
+          "sensors": "Выберите тренировочные данные:"
+        }
+      }
+    },
+    "progress": {
+      "connecting": "Подключение, чтение информации об устройстве и возможностях тренажера",
+      "discovering": "Автоматический сбор тренировочной информации",
+      "closing": "Закрытие соединения и сохранение данных"
+    },
+    "abort": {
+      "not_supported": "Устройство не поддерживается.",
+      "already_in_progress": "Мастер настройки устройства уже выполняется.",
+      "already_configured": "Устройство уже сконфигурировано.",
+      "no_devices_found": "Устройств для конфигурирования не обнаружено."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Тренировочные данные",
+        "description": "Настройка набора сенсоров тренировочных данных.",
+        "data": {
+          "sensors": "Выберите тренировочные данные:"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "cadence_average": {
+        "name": "Каденс средний"
+      },
+      "cadence_instant": {
+        "name": "Каденс"
+      },
+      "distance_total": {
+        "name": "Расстояние"
+      },
+      "elevation_gain_negative": {
+        "name": "Спуск"
+      },
+      "elevation_gain_positive": {
+        "name": "Подъем"
+      },
+      "energy_per_hour": {
+        "name": "Расход энергии за час"
+      },
+      "energy_per_minute": {
+        "name": "Расход энергии за минуту"
+      },
+      "energy_total": {
+        "name": "Энергия"
+      },
+      "force_on_belt": {
+        "name": "Натяжение полотна"
+      },
+      "heart_rate": {
+        "name": "Пульс"
+      },
+      "inclination": {
+        "name": "Наклон"
+      },
+      "metabolic_equivalent": {
+        "name": "Метаболический эквивалент"
+      },
+      "movement_direction": {
+        "name": "Направление движения",
+        "state": {
+          "forward": "Вперед",
+          "backward": "Назад"
+        }
+      },
+      "pace_average": {
+        "name": "Темп средний"
+      },
+      "pace_instant": {
+        "name": "Темп"
+      },
+      "power_average": {
+        "name": "Мощность средняя"
+      },
+      "power_instant": {
+        "name": "Мощность"
+      },
+      "power_output": {
+        "name": "Мощность выходная"
+      },
+      "ramp_angle": {
+        "name": "Наклон рампы"
+      },
+      "resistance_level": {
+        "name": "Уровень нагрузки"
+      },
+      "speed_average": {
+        "name": "Скорость средняя"
+      },
+      "speed_instant": {
+        "name": "Скорость"
+      },
+      "split_time_average": {
+        "name": "Темп гребли средний"
+      },
+      "split_time_instant": {
+        "name": "Темп гребли"
+      },
+      "step_count": {
+        "name": "Шагов"
+      },
+      "step_rate_average": {
+        "name": "Частота шага средняя"
+      },
+      "step_rate_instant": {
+        "name": "Частота шага"
+      },
+      "stride_count": {
+        "name": "Полных шагов"
+      },
+      "stroke_count": {
+        "name": "Взмахов"
+      },
+      "stroke_rate_average": {
+        "name": "Частота взмахов средняя"
+      },
+      "stroke_rate_instant": {
+        "name": "Частота взмахов"
+      },
+      "time_elapsed": {
+        "name": "Время тренировки"
+      },
+      "time_remaining": {
+        "name": "Время до окончания тренировки"
+      },
+      "training_status": {
+        "name": "Статус",
+        "state": {
+          "other": "Прочее",
+          "idle": "Остановлен",
+          "warming_up": "Разогрев",
+          "low_intensity_interval": "Малая интенсивность",
+          "high_intensity_interval": "Высокая интенсивность",
+          "recovery_interval": "Восстановление",
+          "isometric": "Изометрия",
+          "heart_rate_control": "Контроль пульса",
+          "fitness_test": "Тестирование",
+          "speed_too_low": "Низкая скорость",
+          "speed_too_high": "Высокая скорость",
+          "cool_down": "Остывание",
+          "watt_control": "Контроль мощности",
+          "manual_mode": "Ручной режим",
+          "pre_workout": "Подготовка",
+          "post_workout": "Остановка"
+        }
+      }
+    },
+    "button": {
+      "start": {
+        "name": "Начать/возобновить"
+      },
+      "stop": {
+        "name": "Остановить"
+      },
+      "pause": {
+        "name": "Приостановить"
+      },
+      "reset": {
+        "name": "Сбросить параметры"
+      }
+    },
+    "number": {
+      "target_speed": {
+        "name": "Скорость"
+      },
+      "target_inclination": {
+        "name": "Наклон"
+      },
+      "target_resistance": {
+        "name": "Уровень нагрузки"
+      },
+      "target_power": {
+        "name": "Мощность"
+      }
+    },
+    "switch": {
+      "connection": {
+        "name": "Подключение"
+      }
+    }
+  },
+  "selector": {
+    "sensors": {
+      "options": {
+        "cadence_average": "Каденс средний",
+        "cadence_instant": "Каденс",
+        "distance_total": "Расстояние",
+        "elevation_gain_negative": "Спуск",
+        "elevation_gain_positive": "Подъем",
+        "energy_per_hour": "Расход энергии за час",
+        "energy_per_minute": "Расход энергии за минуту",
+        "energy_total": "Энергия",
+        "force_on_belt": "Натяжение полотна",
+        "heart_rate": "Пульс",
+        "inclination": "Наклон",
+        "metabolic_equivalent": "Метаболический эквивалент",
+        "movement_direction": "Направление",
+        "pace_average": "Темп средний",
+        "pace_instant": "Темп",
+        "power_average": "Мощность средняя",
+        "power_instant": "Мощность",
+        "power_output": "Мощность выходная",
+        "ramp_angle": "Наклон рампы",
+        "resistance_level": "Уровень нагрузки",
+        "speed_average": "Скорость средняя",
+        "speed_instant": "Скорость",
+        "split_time_average": "Темп гребли средний",
+        "split_time_instant": "Темп гребли",
+        "step_count": "Шагов",
+        "step_rate_average": "Частота шага средняя",
+        "step_rate_instant": "Частота шага",
+        "stride_count": "Полных шагов",
+        "stroke_count": "Взмахов",
+        "stroke_rate_average": "Частота взмахов средняя",
+        "stroke_rate_instant": "Частота взмахов",
+        "time_elapsed": "Время тренировки",
+        "time_remaining": "Время до окончания тренировки",
+        "training_status": "Статус"
+      }
+    },
+    "discovery": {
+      "options": {
+        "auto": "Автоматически (в течение 30 секунд)",
+        "manual": "Вручную (на основе списка рекомендации тренажера)"
+      }
+    }
+  },
+  "device": {
+    "treadmill": {
+      "name": "Беговая дорожка"
+    },
+    "cross_trainer": {
+      "name": "Эллиптический тренажер"
+    },
+    "rower": {
+      "name": "Гребной тренажер"
+    },
+    "indoor_bike": {
+      "name": "Велотренажер"
+    }
+  },
+  "exceptions": {
+    "device_not_found": {
+      "message": "Тренажер не обнаружен. Убедитесь что он включен и не используется другим приложением."
+    },
+    "connection_failed": {
+      "message": "Не удалось установить соединение с тренажером. Убедитесь что он включен и не используется другим приложением."
+    },
+    "ftms_error": {
+      "message": "Тренажер вероятно переключился на другой протокол, например, FitShow. Попробуйте выполнить перезагрузку тренажера."
+    }
+  }
+}

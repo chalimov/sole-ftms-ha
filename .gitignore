@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+
+# IDE / AI tools
+.vscode/
+.idea/
+.claude/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Dev tools and logs
+tools/
+*.log
+*.txt
+!hacs.json
+!requirements*.txt
+
+# Virtual environments
+venv/
+.venv/
