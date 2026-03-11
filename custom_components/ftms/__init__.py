@@ -5,8 +5,10 @@ import logging
 from types import MappingProxyType
 
 import pyftms
+from bleak import BleakClient
 from bleak.exc import BleakError
 from bleak.uuids import normalize_uuid_str
+from bleak_retry_connector import close_stale_connections, establish_connection
 from homeassistant.components import bluetooth
 from homeassistant.components.bluetooth.match import BluetoothCallbackMatcher
 from homeassistant.config_entries import ConfigEntry
@@ -216,6 +218,48 @@ _pyftms_updater.DataUpdater._on_notify = _patched_on_notify
 # --- End realtime data monkey-patch ---
 
 
+# --- Monkey-patch _connect to also discover Sole proprietary service ---
+from pyftms.client.client import FitnessMachine as _FitnessMachineClass
+from pyftms.client.properties.device_info import DIS_UUID
+from .sole_client import SOLE_SERVICE_UUID
+
+
+async def _patched_connect(self) -> None:
+    """Patched _connect that also discovers the Sole proprietary service."""
+    if not self._need_connect or self.is_connected:
+        return
+
+    await close_stale_connections(self._device)
+
+    _LOGGER.debug("Initialization (patched). Trying to establish connection.")
+
+    self._cli = await establish_connection(
+        client_class=BleakClient,
+        device=self._device,
+        name=self.name,
+        disconnected_callback=self._on_disconnect,
+        services=[FTMS_UUID, DIS_UUID, SOLE_SERVICE_UUID],
+    )
+
+    _LOGGER.debug("Connection success (patched).")
+
+    if not hasattr(self, "_device_info"):
+        from pyftms.client.properties import read_device_info
+        self._device_info = await read_device_info(self._cli)
+
+    if not hasattr(self, "_features"):
+        self._m_features, self._m_settings, self._settings_ranges = (
+            await _patched_read_features(self._cli, self._machine_type)
+        )
+
+    await self._controller.subscribe(self._cli)
+    await self._updater.subscribe(self._cli, self._data_uuid)
+
+
+_FitnessMachineClass._connect = _patched_connect
+# --- End _connect monkey-patch ---
+
+
 def _get_client_safe(device, advertisement, **kwargs):
     """Create FTMS client, falling back to MachineType.TREADMILL if service data is missing."""
     try:
@@ -233,6 +277,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> boo
     """Unload a config entry."""
 
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
+        if entry.runtime_data.sole_client is not None:
+            entry.runtime_data.sole_client.reset()
         await entry.runtime_data.ftms.disconnect()
         bluetooth.async_rediscover_address(hass, entry.runtime_data.ftms.address)
 
@@ -310,6 +356,33 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
         sensors = list(ftms.available_properties)
         _LOGGER.info("No sensors configured, using all available: %s", sensors)
 
+    # --- Sole proprietary protocol support ---
+    from .sole_client import SoleClient, has_sole_service
+    from pyftms.client import const as _ftms_const
+
+    sole_client = None
+    if hasattr(ftms, '_cli') and ftms.is_connected and has_sole_service(ftms._cli):
+        _LOGGER.info("Sole proprietary service detected, subscribing")
+
+        def _on_sole_event(event):
+            _LOGGER.debug(f"Sole event: {event}")
+            coordinator.async_set_updated_data(event)
+
+        sole_client = SoleClient(callback=_on_sole_event)
+        try:
+            await sole_client.subscribe(ftms._cli)
+        except Exception:
+            _LOGGER.warning("Failed to subscribe to Sole service", exc_info=True)
+            sole_client = None
+
+        if sole_client is not None:
+            for s in (_ftms_const.INCLINATION, _ftms_const.DISTANCE_TOTAL,
+                      _ftms_const.ENERGY_TOTAL, _ftms_const.TIME_ELAPSED):
+                if s not in sensors:
+                    sensors.append(s)
+                    _LOGGER.debug("Added Sole sensor: %s", s)
+    # --- End Sole support ---
+
     entry.runtime_data = FtmsData(
         entry_id=entry.entry_id,
         unique_id=unique_id,
@@ -317,6 +390,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
         ftms=ftms,
         coordinator=coordinator,
         sensors=sensors,
+        sole_client=sole_client,
     )
 
     @callback
