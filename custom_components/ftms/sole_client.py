@@ -48,7 +48,7 @@ _WM_RUNNING = 0x04
 
 # Opcodes that should be acknowledged
 _ACK_OPCODES = {
-    _OP_WORKOUT_DATA, _OP_SPEED, _OP_INCLINE, _OP_HEART_RATE,
+    _OP_WORKOUT_MODE, _OP_WORKOUT_DATA, _OP_SPEED, _OP_INCLINE, _OP_HEART_RATE,
 }
 
 type SoleCallback = Callable[[UpdateEvent], None]
@@ -142,6 +142,7 @@ class SoleClient:
         self._cb = callback
         self._subscribed = False
         self._cli: BleakClient | None = None
+        self._notify_count: dict[int, int] = {}  # opcode -> count (for log throttling)
 
     async def subscribe(self, cli: BleakClient) -> None:
         """Subscribe to Sole notifications on an existing BleakClient."""
@@ -184,17 +185,26 @@ class SoleClient:
 
     def _on_notify(self, _char: BleakGATTCharacteristic, data: bytearray) -> None:
         """Handle incoming Sole notification."""
-        _LOGGER.warning("Sole notify: %s", data.hex(" ").upper())
-
         parsed = _parse_frame(bytes(data))
         if parsed is None:
+            _LOGGER.warning("Sole unparseable: %s", data.hex(" ").upper())
             return
 
         opcode, payload = parsed
+
+        # Throttle logging: log first 3 of each opcode, then every 50th
+        cnt = self._notify_count.get(opcode, 0) + 1
+        self._notify_count[opcode] = cnt
+        if cnt <= 3 or cnt % 50 == 0:
+            _LOGGER.warning(
+                "Sole RX #%d op=0x%02X data=%s", cnt, opcode, payload.hex(" ").upper()
+            )
+
         update: UpdateEventData = {}
 
         if opcode == _OP_WORKOUT_DATA:
             update = _parse_workout_data(payload)
+            _LOGGER.warning("Sole WorkoutData: %s", update)
 
         elif opcode == _OP_INCLINE and len(payload) >= 1:
             update[c.INCLINATION] = float(payload[0])
@@ -207,13 +217,10 @@ class SoleClient:
                 update[c.HEART_RATE] = payload[0]
 
         elif opcode == _OP_DEVICE_INFO:
-            _LOGGER.info("Sole DeviceInfo: %s", payload.hex(" "))
+            _LOGGER.warning("Sole DeviceInfo: %s", payload.hex(" "))
 
         elif opcode == _OP_ACK:
-            _LOGGER.debug("Sole ACK received: %s", payload.hex(" "))
-
-        else:
-            _LOGGER.warning("Sole opcode 0x%02X: %s", opcode, payload.hex(" "))
+            _LOGGER.warning("Sole ACK: %s", payload.hex(" "))
 
         # Send ACK for data messages
         if opcode in _ACK_OPCODES and self._cli is not None:
