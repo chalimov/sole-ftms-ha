@@ -368,7 +368,37 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
         def _on_sole_event(event):
             coordinator.async_set_updated_data(event)
 
-        sole_client = SoleClient(callback=_on_sole_event)
+        _disconnecting = False
+
+        async def _do_disconnect_reconnect():
+            """Disconnect and reconnect BLE to release treadmill buttons."""
+            nonlocal _disconnecting
+            if _disconnecting:
+                return
+            _disconnecting = True
+            sole_client._activated = False
+            sole_client.reset()
+            try:
+                _LOGGER.info("Sole: disconnecting BLE to release buttons")
+                await ftms.disconnect()
+                await asyncio.sleep(2.0)
+                _LOGGER.info("Sole: reconnecting BLE")
+                await ftms.connect()
+                if hasattr(ftms, '_cli') and ftms.is_connected and has_sole_service(ftms._cli):
+                    await sole_client.subscribe(ftms._cli)
+                    _LOGGER.info("Sole: reconnected and re-subscribed (passive)")
+            except Exception:
+                _LOGGER.warning("Sole: disconnect/reconnect failed, scheduling reload", exc_info=True)
+                hass.config_entries.async_schedule_reload(entry.entry_id)
+            finally:
+                _disconnecting = False
+
+        def _on_workout_end():
+            """Called by SoleClient when EndWorkout is received."""
+            _LOGGER.info("Sole: EndWorkout received, triggering disconnect/reconnect")
+            hass.async_create_task(_do_disconnect_reconnect())
+
+        sole_client = SoleClient(callback=_on_sole_event, on_workout_end=_on_workout_end)
         try:
             await sole_client.subscribe(ftms._cli)
         except Exception:
@@ -384,24 +414,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
                 sole_client._activated = True
                 hass.async_create_task(sole_client.activate())
 
-            async def _do_disconnect_reconnect():
-                """Disconnect and reconnect BLE to release treadmill buttons."""
-                sole_client._activated = False
-                sole_client.reset()
-                try:
-                    _LOGGER.info("Sole: disconnecting BLE to release buttons")
-                    await ftms.disconnect()
-                    await asyncio.sleep(2.0)
-                    _LOGGER.info("Sole: reconnecting BLE")
-                    await ftms.connect()
-                    # Re-subscribe Sole on the new connection
-                    if hasattr(ftms, '_cli') and ftms.is_connected and has_sole_service(ftms._cli):
-                        await sole_client.subscribe(ftms._cli)
-                        _LOGGER.info("Sole: reconnected and re-subscribed (passive)")
-                except Exception:
-                    _LOGGER.warning("Sole: disconnect/reconnect failed, scheduling reload", exc_info=True)
-                    hass.config_entries.async_schedule_reload(entry.entry_id)
-
             @callback
             def _set_updated_with_sole_trigger(data):
                 _orig_set_updated(data)
@@ -411,10 +423,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
                 speed = event_data.get(_ftms_const.SPEED_INSTANT)
                 if speed is None:
                     return
-                if speed > 0 and not sole_client._activated:
+                if speed > 0 and not sole_client._activated and not _disconnecting:
                     _do_activate()
-                elif speed == 0 and sole_client._activated:
-                    hass.async_create_task(_do_disconnect_reconnect())
 
             coordinator.async_set_updated_data = _set_updated_with_sole_trigger
 
