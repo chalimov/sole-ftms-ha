@@ -155,13 +155,20 @@ def _parse_workout_data(data: bytes) -> UpdateEventData:
 
 
 class SoleClient:
-    """Client for the Sole proprietary BLE serial protocol."""
+    """Client for the Sole proprietary BLE serial protocol.
+
+    Lifecycle:
+    1. subscribe() — subscribe to notify chars, stay completely silent
+    2. activate() — called externally when FTMS detects workout active (speed > 0)
+       Sends DeviceInfo handshake + Command(Start) to trigger WorkoutData streaming
+    3. On EndWorkout — reset so next workout can re-activate
+    """
 
     def __init__(self, callback: SoleCallback) -> None:
         self._cb = callback
         self._subscribed = False
         self._cli: BleakClient | None = None
-        self._data_started = False  # True once Command(Start) sent
+        self._activated = False  # True once handshake + Command(Start) sent
 
     async def subscribe(self, cli: BleakClient) -> None:
         """Subscribe to Sole notifications on an existing BleakClient."""
@@ -185,14 +192,39 @@ class SoleClient:
                 _LOGGER.info("Subscribed to Sole %s notify", label)
 
         self._subscribed = True
-        # Fully passive — no writes on startup. We just listen for
-        # WorkoutMode changes to detect when the user starts a workout.
+        # Stay completely silent — no writes until activate() is called.
+
+    async def activate(self) -> None:
+        """Activate the Sole protocol after the user starts a workout.
+
+        Called by the integration when FTMS reports speed > 0.
+        Sends DeviceInfo + Command(Start) to trigger WorkoutData streaming.
+        """
+        if self._activated:
+            return
+        if not self._cli or not self._cli.is_connected:
+            return
+
+        self._activated = True
+        _LOGGER.info("Sole: activating protocol (workout detected via FTMS)")
+
+        try:
+            # DeviceInfo triggers WorkoutMode exchange
+            await self._write(_build_frame(_OP_DEVICE_INFO, b""))
+
+            # Wait for WorkoutMode echo exchange to settle
+            await asyncio.sleep(3.0)
+
+            # Command(Start) triggers WorkoutData streaming
+            await self._write(_build_frame(_OP_COMMAND, bytes([0x01])))
+        except Exception:
+            _LOGGER.warning("Sole activation failed", exc_info=True)
 
     def reset(self) -> None:
         """Reset state on disconnect."""
         self._subscribed = False
         self._cli = None
-        self._data_started = False
+        self._activated = False
 
     def _on_notify(self, _char: BleakGATTCharacteristic, data: bytearray) -> None:
         """Handle incoming Sole notification."""
@@ -224,21 +256,19 @@ class SoleClient:
         elif opcode == _OP_ACK:
             _LOGGER.debug("Sole ACK: %s", payload.hex(" "))
 
-        # WorkoutMode (0x03) is SPECIAL: echo it back (not standard ACK)
-        if opcode == _OP_WORKOUT_MODE and self._cli is not None:
-            asyncio.ensure_future(self._echo_raw(bytes(data)))
-            # If workout just started (mode != Idle/0x01), trigger data streaming
-            if not self._data_started and len(payload) >= 1 and payload[0] != 0x01:
-                self._data_started = True
-                asyncio.ensure_future(self._trigger_data_stream())
+        # Only echo/ACK after we've been activated (avoid writing before workout)
+        if self._activated:
+            # WorkoutMode (0x03) is SPECIAL: echo it back (not standard ACK)
+            if opcode == _OP_WORKOUT_MODE and self._cli is not None:
+                asyncio.ensure_future(self._echo_raw(bytes(data)))
 
-        # Standard ACK for data messages
-        elif opcode in _STANDARD_ACK_OPCODES and self._cli is not None:
-            asyncio.ensure_future(self._send_ack(opcode))
+            # Standard ACK for data messages
+            elif opcode in _STANDARD_ACK_OPCODES and self._cli is not None:
+                asyncio.ensure_future(self._send_ack(opcode))
 
         # EndWorkout (0x32) — reset state and zero out sensors
         if opcode == _OP_END_WORKOUT:
-            self._data_started = False
+            self._activated = False
             update = {
                 c.SPEED_INSTANT: 0.0,
                 c.INCLINATION: 0.0,
@@ -249,21 +279,6 @@ class SoleClient:
         if update:
             event = UpdateEvent(event_id="update", event_data=update)
             self._cb(event)
-
-    async def _trigger_data_stream(self) -> None:
-        """Send Command(Start) to trigger WorkoutData streaming.
-
-        Called when we detect the user started a workout on the treadmill.
-        """
-        if not self._cli or not self._cli.is_connected:
-            return
-
-        try:
-            _LOGGER.info("Sole: workout detected, triggering data stream")
-            await asyncio.sleep(1.0)
-            await self._write(_build_frame(_OP_COMMAND, bytes([0x01])))
-        except Exception:
-            _LOGGER.warning("Sole trigger data stream failed", exc_info=True)
 
     async def _write(self, data: bytes) -> None:
         """Write data to the Sole write characteristic."""
