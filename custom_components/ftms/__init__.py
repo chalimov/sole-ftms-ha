@@ -395,6 +395,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
                         asyncio.ensure_future(sole_client.activate())
 
             coordinator.async_set_updated_data = _set_updated_with_sole_trigger
+
+            # Check if FTMS already reports speed > 0 (workout already running)
+            current_speed = ftms.get_property(_ftms_const.SPEED_INSTANT)
+            if current_speed and current_speed > 0:
+                _LOGGER.warning("Sole: FTMS already has speed=%s, activating now", current_speed)
+                sole_client._activated = True
+                asyncio.ensure_future(sole_client.activate())
     # --- End Sole support ---
 
     entry.runtime_data = FtmsData(
