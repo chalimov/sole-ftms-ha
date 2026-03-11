@@ -237,70 +237,48 @@ class SoleClient:
             self._cb(event)
 
     async def _start_workout(self) -> None:
-        """Send full handshake to start BLE workout session.
+        """Initialize Sole protocol and try to get workout data streaming.
 
-        Follows treadonme Start() flow with simulated disconnect/reconnect:
-        1. Send handshake (UserProfile, Program, WorkoutTarget, SetWorkoutMode)
-        2. Unsubscribe from notifications (simulate disconnect)
-        3. Wait 5 seconds
-        4. Re-subscribe to notifications (simulate reconnect)
-        5. Request DeviceInfo
+        Strategy: Request DeviceInfo, wait for protocol to settle,
+        then try various commands to trigger data flow.
         """
         if not self._cli or not self._cli.is_connected:
             return
 
         try:
-            # Phase 1: Send handshake
-            _LOGGER.warning("Sole: Phase 1 - Sending handshake")
-
-            await self._write(
-                _build_frame(_OP_USER_PROFILE, bytes([0x01, 30, 0x00, 155, 72])),
-                "UserProfile",
-            )
-            await self._write(
-                _build_frame(_OP_PROGRAM, bytes([0x10, 0x01])),
-                "Program(Manual)",
-            )
-            await self._write(
-                _build_frame(_OP_WORKOUT_TARGET, bytes([30, 0x00, 0x00, 0x00])),
-                "WorkoutTarget",
-            )
-            await self._write(
-                _build_frame(_OP_SET_WORKOUT_MODE, bytes([0x02])),
-                "SetWorkoutMode(Start)",
-            )
-
-            # Phase 2: Simulate disconnect by stopping notifications
-            _LOGGER.warning("Sole: Phase 2 - Simulating disconnect (stop notify)")
-            for uuid in [SOLE_NOTIFY_UUID, SOLE_NOTIFY2_UUID]:
-                char = self._cli.services.get_characteristic(uuid)
-                if char:
-                    try:
-                        await self._cli.stop_notify(char)
-                    except Exception:
-                        pass
-
-            # Phase 3: Wait (treadonme waits 5 seconds)
-            _LOGGER.warning("Sole: Phase 3 - Waiting 5 seconds")
-            await asyncio.sleep(5.0)
-
-            # Phase 4: Re-subscribe (simulate reconnect)
-            _LOGGER.warning("Sole: Phase 4 - Re-subscribing")
-            for uuid, label in [
-                (SOLE_NOTIFY_UUID, "RX"),
-                (SOLE_NOTIFY2_UUID, "2nd"),
-            ]:
-                char = self._cli.services.get_characteristic(uuid)
-                if char:
-                    await self._cli.start_notify(char, self._on_notify)
-                    _LOGGER.warning("Re-subscribed to Sole %s", label)
-
-            # Phase 5: Request DeviceInfo (as treadonme does after reconnect)
-            _LOGGER.warning("Sole: Phase 5 - Requesting DeviceInfo")
+            # 1. Get device info
             await self._write(
                 _build_frame(_OP_DEVICE_INFO, b""),
                 "DeviceInfo",
             )
+
+            # 2. Wait for WorkoutMode echo exchange to settle
+            await asyncio.sleep(3.0)
+
+            # 3. Try Command(Start) to trigger data flow
+            await self._write(
+                _build_frame(_OP_COMMAND, bytes([0x01])),  # CommandTypeStart
+                "Command(Start)",
+            )
+
+            # 4. Wait and try SetWorkoutMode(Running)
+            await asyncio.sleep(1.0)
+            await self._write(
+                _build_frame(_OP_SET_WORKOUT_MODE, bytes([0x04])),  # Running
+                "SetWorkoutMode(Running)",
+            )
+
+            # 5. Wait and try requesting various data types
+            await asyncio.sleep(1.0)
+            for op, label in [
+                (_OP_SPEED, "Speed"),
+                (_OP_INCLINE, "Incline"),
+                (_OP_HEART_RATE, "HeartRate"),
+            ]:
+                await self._write(
+                    _build_frame(op, b""),
+                    f"Request {label}",
+                )
 
         except Exception:
             _LOGGER.warning("Sole start workout failed", exc_info=True)
