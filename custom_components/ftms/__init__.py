@@ -252,8 +252,15 @@ async def _patched_connect(self) -> None:
             await _patched_read_features(self._cli, self._machine_type)
         )
 
-    await self._controller.subscribe(self._cli)
-    await self._updater.subscribe(self._cli, self._data_uuid)
+    # Skip FTMS controller/updater subscriptions if Sole service is present.
+    # The Sole protocol provides all telemetry data, and subscribing to the
+    # FTMS Control Point indications may put the treadmill in a control mode
+    # that interferes with physical button operation.
+    if self._cli.services.get_service(SOLE_SERVICE_UUID) is not None:
+        _LOGGER.warning("Sole service detected — skipping FTMS controller/updater subscriptions")
+    else:
+        await self._controller.subscribe(self._cli)
+        await self._updater.subscribe(self._cli, self._data_uuid)
 
 
 _FitnessMachineClass._connect = _patched_connect
