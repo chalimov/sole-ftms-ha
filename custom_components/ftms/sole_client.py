@@ -152,6 +152,7 @@ def _parse_workout_data(data: bytes) -> UpdateEventData:
     distance = int.from_bytes(data[2:4], "big")
     calories = int.from_bytes(data[4:6], "big")
     heart_rate = data[6]
+    speed_raw = data[7]
     incline = data[8]
 
     # Time remaining in seconds (Sole counts down from workout target)
@@ -170,8 +171,8 @@ def _parse_workout_data(data: bytes) -> UpdateEventData:
     if heart_rate > 0:
         result[c.HEART_RATE] = heart_rate
 
-    # Speed: NOT included from Sole — FTMS provides speed including speed=0 for paused.
-    # Sole never sends speed=0, so FTMS is the authoritative source for speed.
+    # Speed: raw / 10 = km/h (FTMS also provides speed, including speed=0 for paused)
+    result[c.SPEED_INSTANT] = speed_raw / 10.0
 
     # Incline: direct percentage
     result[c.INCLINATION] = float(incline)
@@ -275,8 +276,8 @@ class SoleClient:
             _log("Sole Incline: %s", payload[0])
 
         elif opcode == _OP_SPEED and len(payload) >= 1:
-            # Speed from Sole is logged but NOT used — FTMS provides speed including 0 for paused
-            _log("Sole Speed (ignored, using FTMS): %s km/h", payload[0] / 10.0)
+            update[c.SPEED_INSTANT] = payload[0] / 10.0
+            _log("Sole Speed: %s km/h", payload[0] / 10.0)
 
         elif opcode == _OP_HEART_RATE and len(payload) >= 1:
             if payload[0] > 0:
