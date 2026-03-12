@@ -19,7 +19,8 @@
         "title": "Training data set",
         "description": "Check and, if necessary, change the training data set of your fitness machine. This is a list of sensors created during device initialization. You will be able to change it manually in the future.",
         "data": {
-          "sensors": "Select training data:"
+          "sensors": "Select training data:",
+          "external_hr_entity": "External heart rate monitor (optional)"
         }
       }
     },
@@ -41,7 +42,8 @@
         "title": "Training data set",
         "description": "Setting up a set of training data sensors.",
         "data": {
-          "sensors": "Select training data:"
+          "sensors": "Select training data:",
+          "external_hr_entity": "External heart rate monitor (optional)"
         }
       }
     }
