@@ -4,10 +4,11 @@ Connects to the Sole Serial service (UUID 49535343-FE7D-4AE5-8FA9-9FAFD205E455)
 via an existing BleakClient and parses WorkoutData messages to supplement FTMS
 data with incline, distance, calories, and other fields.
 
-Protocol: passive telemetry mode. We send only GetDeviceInfo to establish
-communication, then always echo WorkoutMode and ACK all standard opcodes.
+Protocol: selective ACK mode. We echo WorkoutMode and ACK standard opcodes
+(WorkoutData, Speed, Incline, etc.) but NEVER respond to ErrorCode (0x10),
+which is the idle heartbeat that triggers "BLE App" mode and blocks buttons.
 We never send Command/UserProfile/Program/SetWorkoutMode — the user controls
-the treadmill from its physical console. This keeps buttons working at all times.
+the treadmill from its physical console.
 
 Protocol reference: github.com/swedishborgie/treadonme
 """
@@ -219,7 +220,7 @@ class SoleClient:
                 _LOGGER.warning("Subscribed to Sole %s notify", label)
 
         self._subscribed = True
-        _LOGGER.warning("Sole: subscribed to notifications (pure passive mode — no writes)")
+        _LOGGER.warning("Sole: subscribed (selective ACK — skip ErrorCode to keep buttons free)")
 
     def reset(self) -> None:
         """Reset state on disconnect."""
@@ -229,7 +230,8 @@ class SoleClient:
     def _on_notify(self, _char: BleakGATTCharacteristic, data: bytearray) -> None:
         """Handle incoming Sole notification.
 
-        Protocol responses (always active):
+        Selective ACK strategy:
+        - ErrorCode (0x10): NEVER respond — idle heartbeat that triggers button lock
         - WorkoutMode (0x03): echo the exact message back
         - Standard opcodes: send ACK
         - ACK/SetWorkoutMode/DeviceInfo: no response needed
@@ -288,10 +290,22 @@ class SoleClient:
         else:
             _log("Sole opcode 0x%02X: %s", opcode, payload.hex(" ") if payload else "(empty)")
 
-        # --- Pure passive mode: NO responses at all ---
-        # ACKing/echoing tells the treadmill "BLE app is active" which blocks
-        # physical buttons. We just listen — treadmill sends data regardless.
-        _log("Sole: passive (no response for 0x%02X)", opcode)
+        # --- Selective ACK: respond to everything EXCEPT ErrorCode (0x10) ---
+        # ErrorCode 0x10 is the idle heartbeat. ACKing it puts the treadmill in
+        # "BLE App" mode which blocks physical buttons. Skipping it keeps buttons
+        # free. We still ACK workout data and echo WorkoutMode so data flows.
+        if opcode == _OP_ERROR_CODE:
+            _log("Sole: SKIP response for ErrorCode 0x%02X (avoid button block)", opcode)
+        elif opcode == _OP_WORKOUT_MODE:
+            self._schedule_write(self._echo_raw(bytes(data)))
+            _log("Sole: echoed WorkoutMode")
+        elif opcode in _STANDARD_ACK_OPCODES:
+            self._schedule_write(self._send_ack(opcode))
+            _log("Sole: sent ACK for 0x%02X", opcode)
+        elif opcode in _NO_RESPONSE_OPCODES:
+            _log("Sole: no response needed for 0x%02X", opcode)
+        else:
+            _log("Sole: no handler for 0x%02X, skipping", opcode)
 
         # --- Fire update event ---
         if update:
