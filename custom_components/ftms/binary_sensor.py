@@ -3,7 +3,6 @@
 import logging
 
 from homeassistant.components.binary_sensor import (
-    BinarySensorDeviceClass,
     BinarySensorEntity,
     BinarySensorEntityDescription,
 )
@@ -19,7 +18,7 @@ WORKOUT_ACTIVE_KEY = "workout_active"
 
 _WORKOUT_ACTIVE = BinarySensorEntityDescription(
     key=WORKOUT_ACTIVE_KEY,
-    device_class=BinarySensorDeviceClass.RUNNING,
+    name="Workout active",
 )
 
 
