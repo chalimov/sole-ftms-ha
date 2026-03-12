@@ -1,4 +1,4 @@
-"""FTMS integration button platform."""
+"""FTMS integration number platform."""
 
 import dataclasses as dc
 import logging
@@ -53,6 +53,18 @@ _ENTITIES = (
     _INCLINATION,
 )
 
+# Sole-specific: incline via FTMS CP (absolute, 0-15%, step 1)
+SOLE_INCLINE_KEY = "sole_target_incline"
+
+_SOLE_INCLINATION = NumberEntityDescription(
+    key=SOLE_INCLINE_KEY,
+    name="Target incline",
+    native_unit_of_measurement="%",
+    native_min_value=0,
+    native_max_value=15,
+    native_step=1,
+)
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -61,21 +73,28 @@ async def async_setup_entry(
 ) -> None:
     """Set up a FTMS number entry."""
 
-    entities, ranges_ = [], entry.runtime_data.ftms.supported_ranges
+    data = entry.runtime_data
+    entities = []
 
-    for desc in _ENTITIES:
-        if range_ := ranges_.get(desc.key):
-            entities.append(
-                FtmsNumberEntity(
-                    entry=entry,
-                    description=dc.replace(
-                        desc,
-                        native_min_value=range_.min_value,
-                        native_max_value=range_.max_value,
-                        native_step=range_.step,
-                    ),
+    if data.sole_client is not None:
+        # Sole mode: add Sole incline number entity
+        entities.append(SoleInclineEntity(entry=entry))
+    else:
+        # Standard FTMS number entities
+        ranges_ = data.ftms.supported_ranges
+        for desc in _ENTITIES:
+            if range_ := ranges_.get(desc.key):
+                entities.append(
+                    FtmsNumberEntity(
+                        entry=entry,
+                        description=dc.replace(
+                            desc,
+                            native_min_value=range_.min_value,
+                            native_max_value=range_.max_value,
+                            native_step=range_.step,
+                        ),
+                    )
                 )
-            )
 
     async_add_entities(entities)
 
@@ -103,4 +122,27 @@ class FtmsNumberEntity(FtmsEntity, NumberEntity):
 
         if (value := e.event_data.get(key)) is not None:
             self._attr_native_value = value
+            self.async_write_ha_state()
+
+
+class SoleInclineEntity(FtmsEntity, NumberEntity):
+    """Sole incline control via FTMS Control Point (absolute, no beep)."""
+
+    def __init__(self, entry: FtmsConfigEntry) -> None:
+        super().__init__(entry, _SOLE_INCLINATION)
+
+    async def async_set_native_value(self, value: float) -> None:
+        """Set incline via FTMS CP opcode 0x03."""
+        sole = self._data.sole_client
+        if sole is None:
+            _LOGGER.warning("Sole client not available for incline control")
+            return
+        await sole.set_incline(value)
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Update from Sole WorkoutData incline."""
+        e = self.coordinator.data
+        if e.event_id == "update" and c.INCLINATION in e.event_data:
+            self._attr_native_value = e.event_data[c.INCLINATION]
             self.async_write_ha_state()

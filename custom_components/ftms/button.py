@@ -20,6 +20,11 @@ _ENTITIES = (
     c.PAUSE,
 )
 
+# Sole-specific button keys
+SOLE_SPEED_UP = "sole_speed_up"
+SOLE_SPEED_DOWN = "sole_speed_down"
+SOLE_STOP = "sole_stop"
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -28,13 +33,31 @@ async def async_setup_entry(
 ) -> None:
     """Set up a FTMS button entry."""
 
-    entities = [
-        FtmsButtonEntity(
-            entry=entry,
-            description=ButtonEntityDescription(key=description),
-        )
-        for description in _ENTITIES
-    ]
+    data = entry.runtime_data
+    entities = []
+
+    if data.sole_client is not None:
+        # Sole mode: only add Sole-specific control buttons
+        for key, name in [
+            (SOLE_SPEED_UP, "Speed up"),
+            (SOLE_SPEED_DOWN, "Speed down"),
+            (SOLE_STOP, "Stop"),
+        ]:
+            entities.append(
+                SoleButtonEntity(
+                    entry=entry,
+                    description=ButtonEntityDescription(key=key, name=name),
+                )
+            )
+    else:
+        # Standard FTMS buttons
+        for description in _ENTITIES:
+            entities.append(
+                FtmsButtonEntity(
+                    entry=entry,
+                    description=ButtonEntityDescription(key=description),
+                )
+            )
 
     async_add_entities(entities)
 
@@ -56,3 +79,22 @@ class FtmsButtonEntity(FtmsEntity, ButtonEntity):
 
         elif self.key == c.PAUSE:
             await self.ftms.pause()
+
+
+class SoleButtonEntity(FtmsEntity, ButtonEntity):
+    """Sole-specific control buttons (speed up/down, stop)."""
+
+    @override
+    async def async_press(self) -> None:
+        """Handle the button press."""
+        sole = self._data.sole_client
+        if sole is None:
+            _LOGGER.warning("Sole client not available")
+            return
+
+        if self.key == SOLE_SPEED_UP:
+            await sole.speed_up()
+        elif self.key == SOLE_SPEED_DOWN:
+            await sole.speed_down()
+        elif self.key == SOLE_STOP:
+            await sole.stop_belt()
