@@ -34,6 +34,7 @@ from pyftms import (
 from pyftms.client.const import FTMS_UUID
 
 from .const import DOMAIN
+from .sole_client import SOLE_SERVICE_UUID, SOLE_SENSORS
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -192,11 +193,25 @@ class FTMSConfigFlow(ConfigFlow, domain=DOMAIN):
 
         return await self.async_step_confirm()
 
+    def _has_sole_service(self) -> bool:
+        """Check if the device advertises the Sole proprietary service."""
+        if self._ble_info is None:
+            return False
+        return SOLE_SERVICE_UUID in self._ble_info.advertisement.service_uuids
+
     async def async_step_confirm(
         self,
         user_input: dict[str, Any] | None = None,
     ) -> ConfigFlowResult:
         if user_input is not None:
+            # Sole F63: skip BLE connect/discover entirely — features are hardcoded
+            if self._has_sole_service():
+                _LOGGER.debug("Sole device detected, skipping BLE discovery")
+                assert (info := self._ble_info)
+                self._ftms = _get_client_safe(info.device, info.advertisement)
+                self._suggested_sensors = list(SOLE_SENSORS)
+                return await self.async_step_information()
+
             self._discovery_time = 30 if user_input[CONF_DISCOVERY] == "auto" else 0
             return await self.async_step_ble_request()
 
