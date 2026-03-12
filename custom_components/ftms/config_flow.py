@@ -34,7 +34,7 @@ from pyftms import (
 from pyftms.client.const import FTMS_UUID
 
 from .const import DOMAIN
-from .sole_client import SOLE_SERVICE_UUID, SOLE_SENSORS
+from .sole_client import SOLE_DEVICE_NAMES, SOLE_SERVICE_UUID, SOLE_SENSORS
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -193,18 +193,21 @@ class FTMSConfigFlow(ConfigFlow, domain=DOMAIN):
 
         return await self.async_step_confirm()
 
-    def _has_sole_service(self) -> bool:
-        """Check if the device advertises the Sole proprietary service."""
+    def _is_sole_device(self) -> bool:
+        """Check if this is a Sole treadmill (by name or advertised service)."""
         if self._ble_info is None:
             return False
-        return SOLE_SERVICE_UUID in self._ble_info.advertisement.service_uuids
+        if SOLE_SERVICE_UUID in self._ble_info.advertisement.service_uuids:
+            return True
+        name = (self._ble_info.name or "").upper()
+        return any(model in name for model in SOLE_DEVICE_NAMES)
 
     async def async_step_confirm(
         self,
         user_input: dict[str, Any] | None = None,
     ) -> ConfigFlowResult:
         # Sole F63: skip discovery form + BLE connect entirely
-        if self._has_sole_service():
+        if self._is_sole_device():
             _LOGGER.debug("Sole device detected, skipping BLE discovery")
             assert (info := self._ble_info)
             self._ftms = _get_client_safe(info.device, info.advertisement)
