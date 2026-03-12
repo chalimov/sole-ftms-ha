@@ -203,15 +203,15 @@ class FTMSConfigFlow(ConfigFlow, domain=DOMAIN):
         self,
         user_input: dict[str, Any] | None = None,
     ) -> ConfigFlowResult:
-        if user_input is not None:
-            # Sole F63: skip BLE connect/discover entirely — features are hardcoded
-            if self._has_sole_service():
-                _LOGGER.debug("Sole device detected, skipping BLE discovery")
-                assert (info := self._ble_info)
-                self._ftms = _get_client_safe(info.device, info.advertisement)
-                self._suggested_sensors = list(SOLE_SENSORS)
-                return await self.async_step_information()
+        # Sole F63: skip discovery form + BLE connect entirely
+        if self._has_sole_service():
+            _LOGGER.debug("Sole device detected, skipping BLE discovery")
+            assert (info := self._ble_info)
+            self._ftms = _get_client_safe(info.device, info.advertisement)
+            self._suggested_sensors = list(SOLE_SENSORS)
+            return await self.async_step_information()
 
+        if user_input is not None:
             self._discovery_time = 30 if user_input[CONF_DISCOVERY] == "auto" else 0
             return await self.async_step_ble_request()
 
