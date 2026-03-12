@@ -4,6 +4,11 @@ Connects to the Sole Serial service (UUID 49535343-FE7D-4AE5-8FA9-9FAFD205E455)
 via an existing BleakClient and parses WorkoutData messages to supplement FTMS
 data with incline, distance, calories, and other fields.
 
+Protocol: passive telemetry mode. We send only GetDeviceInfo to establish
+communication, then always echo WorkoutMode and ACK all standard opcodes.
+We never send Command/UserProfile/Program/SetWorkoutMode — the user controls
+the treadmill from its physical console. This keeps buttons working at all times.
+
 Protocol reference: github.com/swedishborgie/treadonme
 """
 
@@ -54,7 +59,7 @@ _OP_PROGRAM_GFX = 0x40
 _OP_DEVICE_INFO = 0xF0
 _OP_COMMAND = 0xF1
 
-# Opcodes that get a standard ACK (opcode 0x00 + echoed opcode + OK)
+# Opcodes that get a standard ACK (echo opcode + "OK")
 _STANDARD_ACK_OPCODES = {
     _OP_WORKOUT_DATA, _OP_HR_TYPE, _OP_ERROR_CODE,
     _OP_SPEED, _OP_INCLINE, _OP_LEVEL, _OP_RPM, _OP_HEART_RATE,
@@ -62,7 +67,8 @@ _STANDARD_ACK_OPCODES = {
     _OP_END_WORKOUT, _OP_PROGRAM_GFX,
 }
 
-# WorkoutMode (0x03) is special: must ECHO back the same message, not ACK
+# Opcodes that get NO response (just read the data)
+_NO_RESPONSE_OPCODES = {_OP_ACK, _OP_SET_WORKOUT_MODE, _OP_DEVICE_INFO}
 
 # Sensors provided by the Sole protocol
 SOLE_SENSORS = [
@@ -157,22 +163,21 @@ def _parse_workout_data(data: bytes) -> UpdateEventData:
 class SoleClient:
     """Client for the Sole proprietary BLE serial protocol.
 
-    Lifecycle:
-    1. subscribe() — subscribe to notify chars, stay silent (passive)
-    2. activate() — called when FTMS detects speed > 0, triggers data streaming
-    3. When workout ends — caller reloads integration to force BLE reconnect,
-       which releases the treadmill from protocol mode
+    Passive telemetry mode:
+    1. subscribe() — subscribe to notifications, send GetDeviceInfo to establish
+       communication, then always echo WorkoutMode and ACK standard opcodes.
+    2. Never sends Command/UserProfile/Program/SetWorkoutMode — user controls
+       the treadmill from its physical console.
+    3. Buttons work at all times (before, during, and after workouts).
     """
 
-    def __init__(self, callback: SoleCallback, on_workout_end: Callable[[], None] | None = None) -> None:
+    def __init__(self, callback: SoleCallback) -> None:
         self._cb = callback
-        self._on_workout_end = on_workout_end
         self._subscribed = False
         self._cli: BleakClient | None = None
-        self._activated = False
 
     async def subscribe(self, cli: BleakClient) -> None:
-        """Subscribe to Sole notifications on an existing BleakClient."""
+        """Subscribe to Sole notifications and send GetDeviceInfo."""
         if self._subscribed:
             return
 
@@ -193,42 +198,32 @@ class SoleClient:
 
         self._subscribed = True
 
-    async def activate(self) -> None:
-        """Activate the Sole protocol (workout detected via FTMS)."""
-        if not self._cli or not self._cli.is_connected:
-            return
-
-        _LOGGER.info("Sole: activating protocol (workout detected via FTMS)")
-
+        # Send GetDeviceInfo to establish communication with the treadmill.
+        # This is the ONLY message we initiate. The treadmill will then
+        # stream telemetry whenever a workout is running.
         try:
             frame = _build_frame(_OP_DEVICE_INFO, b"")
             await asyncio.wait_for(
-                self._cli.write_gatt_char(SOLE_WRITE_UUID, frame, response=False),
+                cli.write_gatt_char(SOLE_WRITE_UUID, frame, response=False),
                 timeout=5.0,
             )
-            await asyncio.sleep(3.0)
-
-            frame = _build_frame(_OP_COMMAND, bytes([0x01]))
-            await asyncio.wait_for(
-                self._cli.write_gatt_char(SOLE_WRITE_UUID, frame, response=False),
-                timeout=5.0,
-            )
-            _LOGGER.info("Sole: activation complete, data streaming")
-        except asyncio.TimeoutError:
-            _LOGGER.warning("Sole activation timed out on BLE write")
-            self._activated = False
+            _LOGGER.info("Sole: sent GetDeviceInfo, protocol established")
         except Exception:
-            _LOGGER.warning("Sole activation failed", exc_info=True)
-            self._activated = False
+            _LOGGER.warning("Sole: failed to send GetDeviceInfo", exc_info=True)
 
     def reset(self) -> None:
         """Reset state on disconnect."""
         self._subscribed = False
         self._cli = None
-        self._activated = False
 
     def _on_notify(self, _char: BleakGATTCharacteristic, data: bytearray) -> None:
-        """Handle incoming Sole notification."""
+        """Handle incoming Sole notification.
+
+        Protocol responses (always active):
+        - WorkoutMode (0x03): echo the exact message back
+        - Standard opcodes: send ACK
+        - ACK/SetWorkoutMode/DeviceInfo: no response needed
+        """
         parsed = _parse_frame(bytes(data))
         if parsed is None:
             _LOGGER.debug("Sole unparseable: %s", data.hex(" "))
@@ -237,6 +232,7 @@ class SoleClient:
         opcode, payload = parsed
         update: UpdateEventData = {}
 
+        # --- Parse telemetry data ---
         if opcode == _OP_WORKOUT_DATA:
             update = _parse_workout_data(payload)
             _LOGGER.debug("Sole WorkoutData: %s", update)
@@ -251,27 +247,26 @@ class SoleClient:
             if payload[0] > 0:
                 update[c.HEART_RATE] = payload[0]
 
+        elif opcode == _OP_DEVICE_INFO:
+            _LOGGER.info("Sole DeviceInfo response: %s", payload.hex(" "))
+
+        elif opcode == _OP_END_WORKOUT:
+            _LOGGER.info("Sole EndWorkout received")
+
         else:
             _LOGGER.debug("Sole opcode 0x%02X: %s", opcode, payload.hex(" "))
 
-        # Only respond to protocol when activated (during workout)
-        if self._activated and self._cli is not None:
+        # --- Protocol responses (always, unconditionally) ---
+        if self._cli is not None:
             if opcode == _OP_WORKOUT_MODE:
+                # MUST echo the exact message back
                 asyncio.ensure_future(self._echo_raw(bytes(data)))
             elif opcode in _STANDARD_ACK_OPCODES:
+                # Send standard ACK
                 asyncio.ensure_future(self._send_ack(opcode))
+            # _NO_RESPONSE_OPCODES: do nothing (ACK, SetWorkoutMode, DeviceInfo)
 
-        # EndWorkout — zero out sensors and notify caller to disconnect
-        if opcode == _OP_END_WORKOUT:
-            self._activated = False
-            update = {
-                c.SPEED_INSTANT: 0.0,
-                c.INCLINATION: 0.0,
-                c.HEART_RATE: 0,
-            }
-            if self._on_workout_end:
-                self._on_workout_end()
-
+        # --- Fire update event ---
         if update:
             event = UpdateEvent(event_id="update", event_data=update)
             self._cb(event)
