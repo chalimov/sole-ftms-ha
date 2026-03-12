@@ -219,19 +219,7 @@ class SoleClient:
                 _LOGGER.warning("Subscribed to Sole %s notify", label)
 
         self._subscribed = True
-
-        # Send GetDeviceInfo to establish communication with the treadmill.
-        # This is the ONLY message we initiate. The treadmill will then
-        # stream telemetry whenever a workout is running.
-        try:
-            frame = _build_frame(_OP_DEVICE_INFO, b"")
-            await asyncio.wait_for(
-                cli.write_gatt_char(SOLE_WRITE_UUID, frame, response=False),
-                timeout=5.0,
-            )
-            _LOGGER.warning("Sole: sent GetDeviceInfo, protocol established")
-        except Exception:
-            _LOGGER.warning("Sole: failed to send GetDeviceInfo", exc_info=True)
+        _LOGGER.warning("Sole: subscribed to notifications (pure passive mode — no writes)")
 
     def reset(self) -> None:
         """Reset state on disconnect."""
@@ -300,16 +288,10 @@ class SoleClient:
         else:
             _log("Sole opcode 0x%02X: %s", opcode, payload.hex(" ") if payload else "(empty)")
 
-        # --- Protocol responses (always, unconditionally) ---
-        if self._cli is not None:
-            if opcode == _OP_WORKOUT_MODE:
-                _log("Sole TX: echoing WorkoutMode back")
-                self._schedule_write(self._echo_raw(bytes(data)))
-            elif opcode in _STANDARD_ACK_OPCODES:
-                _log("Sole TX: sending ACK for 0x%02X", opcode)
-                self._schedule_write(self._send_ack(opcode))
-            else:
-                _log("Sole: no response needed for 0x%02X", opcode)
+        # --- Pure passive mode: NO responses at all ---
+        # ACKing/echoing tells the treadmill "BLE app is active" which blocks
+        # physical buttons. We just listen — treadmill sends data regardless.
+        _log("Sole: passive (no response for 0x%02X)", opcode)
 
         # --- Fire update event ---
         if update:
