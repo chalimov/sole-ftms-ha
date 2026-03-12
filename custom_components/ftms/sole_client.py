@@ -15,6 +15,7 @@ Protocol reference: github.com/swedishborgie/treadonme
 
 import asyncio
 import logging
+import struct
 from typing import Callable
 
 from bleak import BleakClient
@@ -357,3 +358,46 @@ class SoleClient:
                 _log("Sole TX: client not connected, cannot ACK 0x%02X", opcode)
         except Exception:
             _LOGGER.warning("Failed to send Sole ACK for 0x%02X", opcode, exc_info=True)
+
+    # --- Control commands (confirmed working via ble-test.py) ---
+
+    FTMS_CONTROL_POINT_UUID = "00002ad9-0000-1000-8000-00805f9b34fb"
+
+    async def _send_sole_command(self, sub_opcode: int) -> None:
+        """Send Sole Command (0xF1) with sub-opcode."""
+        if not self._cli or not self._cli.is_connected:
+            _log("Cannot send command 0x%02X: not connected", sub_opcode)
+            return
+        frame = _build_frame(_OP_COMMAND, bytes([sub_opcode]))
+        await self._cli.write_gatt_char(SOLE_WRITE_UUID, frame, response=False)
+        _log("Sent Sole command 0x%02X: %s", sub_opcode, frame.hex(" "))
+
+    async def speed_up(self) -> None:
+        """Speed +0.1 km/h (Sole 0xF1 0x02)."""
+        await self._send_sole_command(0x02)
+
+    async def speed_down(self) -> None:
+        """Speed -0.1 km/h (Sole 0xF1 0x03)."""
+        await self._send_sole_command(0x03)
+
+    async def stop_belt(self) -> None:
+        """Stop the belt (Sole 0xF1 0x06)."""
+        await self._send_sole_command(0x06)
+
+    async def set_incline(self, percent: float) -> None:
+        """Set absolute incline via FTMS Control Point (opcode 0x03).
+
+        Tested: 0->5, 5->0, 0->3, 3->10, 10->0 — all work. No beep.
+        Requires: FTMS subscribed + Request Control (0x00) + 0xE9 sent.
+        """
+        if not self._cli or not self._cli.is_connected:
+            _log("Cannot set incline: not connected")
+            return
+        value = int(percent * 10)  # 0.1% resolution
+        data = bytes([0x03]) + struct.pack("<h", value)
+        cp_ch = self._cli.services.get_characteristic(self.FTMS_CONTROL_POINT_UUID)
+        if cp_ch:
+            await self._cli.write_gatt_char(cp_ch, data, response=True)
+            _log("Set incline to %.1f%% (FTMS CP: %s)", percent, data.hex(" "))
+        else:
+            _log("Cannot set incline: FTMS CP characteristic not found")
