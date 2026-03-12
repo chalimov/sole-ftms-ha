@@ -46,6 +46,9 @@ def _log(msg, *args):
 
 # Sole proprietary BLE UUIDs (Microchip Transparent UART)
 SOLE_SERVICE_UUID = "49535343-fe7d-4ae5-8fa9-9fafd205e455"
+
+# Known Sole treadmill model names (as advertised via BLE)
+SOLE_DEVICE_NAMES = {"F63", "F80", "F85", "S77", "TT8"}
 SOLE_NOTIFY_UUID = "49535343-1e4d-4bd9-ba61-23c647249616"   # RX (main notify)
 SOLE_NOTIFY2_UUID = "49535343-4c8a-39b3-2f49-511cff073b7e"  # 2nd notify char
 SOLE_WRITE_UUID = "49535343-8841-43f4-a8d4-ecbe34729bb3"     # TX (write)
