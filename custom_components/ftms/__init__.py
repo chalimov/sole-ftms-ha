@@ -253,8 +253,15 @@ async def _patched_connect(self) -> None:
             await _patched_read_features(self._cli, self._machine_type)
         )
 
-    await self._controller.subscribe(self._cli)
-    await self._updater.subscribe(self._cli, self._data_uuid)
+    # Skip FTMS controller when Sole is present — the controller sends the 0xE9
+    # vendor command which interferes with Sole EndWorkout detection.
+    # Keep updater for speed data (needed for hybrid FTMS->Sole transition).
+    if self._cli.services.get_service(SOLE_SERVICE_UUID) is not None:
+        _LOGGER.warning("Sole service detected — skipping FTMS controller (keeping updater)")
+        await self._updater.subscribe(self._cli, self._data_uuid)
+    else:
+        await self._controller.subscribe(self._cli)
+        await self._updater.subscribe(self._cli, self._data_uuid)
 
 
 _FitnessMachineClass._connect = _patched_connect
