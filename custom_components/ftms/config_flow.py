@@ -340,12 +340,16 @@ class FTMSConfigFlow(ConfigFlow, domain=DOMAIN):
             except AttributeError:
                 dev_info = {}
 
-            s1 = dev_info.get("manufacturer", "FTMS")
-            s2 = dev_info.get("model", "GENERIC")
-            s3 = f"({dev_info.get('serial_number', unique_id)})"
+            if self._is_sole_device() and self._ble_info:
+                title = f"Sole {self._ble_info.name} ({unique_id})"
+            else:
+                s1 = dev_info.get("manufacturer", "FTMS")
+                s2 = dev_info.get("model", "GENERIC")
+                s3 = f"({dev_info.get('serial_number', unique_id)})"
+                title = " ".join((s1, s2, s3))
 
             return self.async_create_entry(
-                title=" ".join((s1, s2, s3)),
+                title=title,
                 data={CONF_ADDRESS: self._ftms.address},
                 options={CONF_SENSORS: user_input[CONF_SENSORS]},
             )
