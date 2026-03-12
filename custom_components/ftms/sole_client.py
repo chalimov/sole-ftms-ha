@@ -191,8 +191,13 @@ class SoleClient:
     3. Buttons work at all times (before, during, and after workouts).
     """
 
-    def __init__(self, callback: SoleCallback) -> None:
+    def __init__(
+        self,
+        callback: SoleCallback,
+        on_end_workout: Callable[[], None] | None = None,
+    ) -> None:
         self._cb = callback
+        self._on_end_workout = on_end_workout
         self._subscribed = False
         self._cli: BleakClient | None = None
         # Must hold strong references to tasks to prevent GC before completion.
@@ -284,6 +289,8 @@ class SoleClient:
 
         elif opcode == _OP_END_WORKOUT:
             _log("Sole EndWorkout received, payload: %s", payload.hex(" ") if payload else "(empty)")
+            if self._on_end_workout:
+                self._on_end_workout()
 
         elif opcode == _OP_ACK:
             _log("Sole ACK received: %s", payload.hex(" ") if payload else "(empty)")

@@ -36,6 +36,7 @@ from .coordinator import DataCoordinator
 from .models import FtmsData
 
 PLATFORMS: list[Platform] = [
+    Platform.BINARY_SENSOR,
     Platform.BUTTON,
     Platform.NUMBER,
     Platform.SENSOR,
@@ -252,15 +253,8 @@ async def _patched_connect(self) -> None:
             await _patched_read_features(self._cli, self._machine_type)
         )
 
-    # Skip FTMS controller/updater subscriptions if Sole service is present.
-    # The Sole protocol provides all telemetry data, and subscribing to the
-    # FTMS Control Point indications may put the treadmill in a control mode
-    # that interferes with physical button operation.
-    if self._cli.services.get_service(SOLE_SERVICE_UUID) is not None:
-        _LOGGER.warning("Sole service detected — skipping FTMS controller/updater subscriptions")
-    else:
-        await self._controller.subscribe(self._cli)
-        await self._updater.subscribe(self._cli, self._data_uuid)
+    await self._controller.subscribe(self._cli)
+    await self._updater.subscribe(self._cli, self._data_uuid)
 
 
 _FitnessMachineClass._connect = _patched_connect
@@ -300,9 +294,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
     if not (srv_info := bluetooth.async_last_service_info(hass, address)):
         raise ConfigEntryNotReady(translation_key="device_not_found")
 
-    def _on_disconnect(ftms_: pyftms.FitnessMachine) -> None:
-        """Disconnect handler. Reload entry on disconnect."""
+    # Mutable flag: set True during intentional hybrid BLE reconnect to suppress reload
+    _hybrid_state = {"reconnecting": False}
 
+    def _on_disconnect(ftms_: pyftms.FitnessMachine) -> None:
+        """Disconnect handler. Reload entry on disconnect (unless hybrid reconnecting)."""
+
+        if _hybrid_state["reconnecting"]:
+            return
         if ftms_.need_connect:
             hass.config_entries.async_schedule_reload(entry.entry_id)
 
@@ -363,26 +362,89 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
         sensors = list(ftms.available_properties)
         _LOGGER.info("No sensors configured, using all available: %s", sensors)
 
-    # --- Sole proprietary protocol support (passive telemetry) ---
+    # --- Sole hybrid protocol support (FTMS idle -> Sole active -> disconnect -> repeat) ---
     from .sole_client import SoleClient, has_sole_service, SOLE_SENSORS
+    from .binary_sensor import WORKOUT_ACTIVE_KEY
+    from pyftms.client import const as sole_const
+    from pyftms.client.backends.event import UpdateEvent
 
     sole_client = None
     if hasattr(ftms, '_cli') and ftms.is_connected and has_sole_service(ftms._cli):
-        _LOGGER.info("Sole proprietary service detected, subscribing")
+        _LOGGER.info("Sole service detected, hybrid mode: FTMS until speed>0, then Sole")
+
+        sole_activated = False
 
         def _on_sole_event(event):
             coordinator.async_set_updated_data(event)
 
-        sole_client = SoleClient(callback=_on_sole_event)
-        try:
-            await sole_client.subscribe(ftms._cli)
-        except Exception:
-            _LOGGER.warning("Failed to subscribe to Sole service", exc_info=True)
-            sole_client = None
+        async def _hybrid_reconnect():
+            """BLE disconnect + reconnect cycle to exit BLE App mode."""
+            nonlocal sole_activated
+            _hybrid_state["reconnecting"] = True
+            _LOGGER.warning("Sole EndWorkout -> BLE disconnect/reconnect")
 
-        if sole_client is not None:
-            sensors = list(SOLE_SENSORS)
-    # --- End Sole support ---
+            sole_client.reset()
+
+            try:
+                await ftms.disconnect()
+            except Exception:
+                _LOGGER.debug("Disconnect error", exc_info=True)
+
+            # Force pyftms to re-establish connection
+            ftms._need_connect = True
+
+            try:
+                await ftms.connect()
+                _LOGGER.warning("Reconnected in FTMS-only mode, START button unblocked")
+            except Exception:
+                _LOGGER.warning("Reconnect failed", exc_info=True)
+
+            sole_activated = False
+            _hybrid_state["reconnecting"] = False
+            coordinator.async_set_updated_data(
+                UpdateEvent(event_id="update", event_data={WORKOUT_ACTIVE_KEY: False})
+            )
+
+        def _on_end_workout():
+            hass.async_create_task(_hybrid_reconnect())
+
+        sole_client = SoleClient(
+            callback=_on_sole_event,
+            on_end_workout=_on_end_workout,
+        )
+        sensors = list(SOLE_SENSORS)
+
+        # Override FTMS callback: detect speed>0 to activate Sole on same connection
+        def _hybrid_ftms_callback(event):
+            nonlocal sole_activated
+            coordinator.async_set_updated_data(event)
+
+            if (
+                not sole_activated
+                and not _hybrid_state["reconnecting"]
+                and hasattr(event, 'event_data')
+                and event.event_id == "update"
+            ):
+                speed = event.event_data.get(sole_const.SPEED_INSTANT)
+                if speed is not None and speed > 0:
+                    sole_activated = True
+                    _LOGGER.warning("FTMS speed>0, activating Sole protocol")
+
+                    async def _activate():
+                        nonlocal sole_activated
+                        try:
+                            await sole_client.subscribe(ftms._cli)
+                            coordinator.async_set_updated_data(
+                                UpdateEvent(event_id="update", event_data={WORKOUT_ACTIVE_KEY: True})
+                            )
+                        except Exception:
+                            _LOGGER.warning("Failed to activate Sole", exc_info=True)
+                            sole_activated = False
+
+                    hass.async_create_task(_activate())
+
+        ftms.set_callback(_hybrid_ftms_callback)
+    # --- End Sole hybrid support ---
 
     entry.runtime_data = FtmsData(
         entry_id=entry.entry_id,
