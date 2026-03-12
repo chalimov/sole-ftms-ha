@@ -220,6 +220,16 @@ class SoleClient:
                 _LOGGER.warning("Subscribed to Sole %s notify", label)
 
         self._subscribed = True
+
+        # Send GetDeviceInfo to kick-start communication.
+        # Without this, the treadmill ignores us entirely.
+        try:
+            get_info = _build_frame(_OP_DEVICE_INFO)
+            await cli.write_gatt_char(SOLE_WRITE_UUID, get_info, response=False)
+            _LOGGER.warning("Sole: sent GetDeviceInfo to initiate data flow")
+        except Exception:
+            _LOGGER.warning("Sole: failed to send GetDeviceInfo", exc_info=True)
+
         _LOGGER.warning("Sole: subscribed (selective ACK — skip ErrorCode to keep buttons free)")
 
     def reset(self) -> None:
