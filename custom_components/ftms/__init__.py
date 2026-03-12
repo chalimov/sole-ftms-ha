@@ -1,6 +1,5 @@
 """The FTMS integration."""
 
-import asyncio
 import io
 import logging
 from types import MappingProxyType
@@ -357,48 +356,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
         sensors = list(ftms.available_properties)
         _LOGGER.info("No sensors configured, using all available: %s", sensors)
 
-    # --- Sole proprietary protocol support ---
+    # --- Sole proprietary protocol support (passive telemetry) ---
     from .sole_client import SoleClient, has_sole_service, SOLE_SENSORS
-    from pyftms.client import const as _ftms_const
 
     sole_client = None
     if hasattr(ftms, '_cli') and ftms.is_connected and has_sole_service(ftms._cli):
-        _LOGGER.info("Sole proprietary service detected, subscribing (passive until workout)")
+        _LOGGER.info("Sole proprietary service detected, subscribing")
 
         def _on_sole_event(event):
             coordinator.async_set_updated_data(event)
 
-        _disconnecting = False
-
-        async def _do_disconnect_reconnect():
-            """Disconnect and reconnect BLE to release treadmill buttons."""
-            nonlocal _disconnecting
-            if _disconnecting:
-                return
-            _disconnecting = True
-            sole_client._activated = False
-            sole_client.reset()
-            try:
-                _LOGGER.info("Sole: disconnecting BLE to release buttons")
-                await ftms.disconnect()
-                await asyncio.sleep(2.0)
-                _LOGGER.info("Sole: reconnecting BLE")
-                await ftms.connect()
-                if hasattr(ftms, '_cli') and ftms.is_connected and has_sole_service(ftms._cli):
-                    await sole_client.subscribe(ftms._cli)
-                    _LOGGER.info("Sole: reconnected and re-subscribed (passive)")
-            except Exception:
-                _LOGGER.warning("Sole: disconnect/reconnect failed, scheduling reload", exc_info=True)
-                hass.config_entries.async_schedule_reload(entry.entry_id)
-            finally:
-                _disconnecting = False
-
-        def _on_workout_end():
-            """Called by SoleClient when EndWorkout is received."""
-            _LOGGER.info("Sole: EndWorkout received, triggering disconnect/reconnect")
-            hass.async_create_task(_do_disconnect_reconnect())
-
-        sole_client = SoleClient(callback=_on_sole_event, on_workout_end=_on_workout_end)
+        sole_client = SoleClient(callback=_on_sole_event)
         try:
             await sole_client.subscribe(ftms._cli)
         except Exception:
@@ -407,30 +375,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
 
         if sole_client is not None:
             sensors = list(SOLE_SENSORS)
-
-            _orig_set_updated = coordinator.async_set_updated_data
-
-            def _do_activate():
-                sole_client._activated = True
-                hass.async_create_task(sole_client.activate())
-
-            @callback
-            def _set_updated_with_sole_trigger(data):
-                _orig_set_updated(data)
-                event_data = getattr(data, 'event_data', None)
-                if not event_data:
-                    return
-                speed = event_data.get(_ftms_const.SPEED_INSTANT)
-                if speed is None:
-                    return
-                if speed > 0 and not sole_client._activated and not _disconnecting:
-                    _do_activate()
-
-            coordinator.async_set_updated_data = _set_updated_with_sole_trigger
-
-            current_speed = ftms.get_property(_ftms_const.SPEED_INSTANT)
-            if current_speed and current_speed > 0:
-                _do_activate()
     # --- End Sole support ---
 
     entry.runtime_data = FtmsData(
