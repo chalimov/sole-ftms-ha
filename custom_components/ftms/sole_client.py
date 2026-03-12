@@ -23,6 +23,25 @@ from pyftms.client.backends.event import UpdateEvent, UpdateEventData
 
 _LOGGER = logging.getLogger(__name__)
 
+# Dedicated file logger so we can read the full trace (HA log API only returns 100 lines)
+_FILE_LOGGER = logging.getLogger("sole_debug_file")
+_FILE_LOGGER.setLevel(logging.DEBUG)
+_FILE_LOGGER.propagate = False
+try:
+    import os
+    os.makedirs("/config/www", exist_ok=True)
+    _fh = logging.FileHandler("/config/www/sole_debug.log", mode="w")
+    _fh.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
+    _FILE_LOGGER.addHandler(_fh)
+except Exception:
+    pass  # not running on HA, ignore
+
+
+def _log(msg, *args):
+    """Log to both HA log (WARNING) and dedicated file (DEBUG)."""
+    _LOGGER.warning(msg, *args)
+    _FILE_LOGGER.debug(msg, *args)
+
 # Sole proprietary BLE UUIDs (Microchip Transparent UART)
 SOLE_SERVICE_UUID = "49535343-fe7d-4ae5-8fa9-9fafd205e455"
 SOLE_NOTIFY_UUID = "49535343-1e4d-4bd9-ba61-23c647249616"   # RX (main notify)
@@ -175,6 +194,9 @@ class SoleClient:
         self._cb = callback
         self._subscribed = False
         self._cli: BleakClient | None = None
+        # Must hold strong references to tasks to prevent GC before completion.
+        # See: https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task
+        self._pending_writes: set[asyncio.Task] = set()
 
     async def subscribe(self, cli: BleakClient) -> None:
         """Subscribe to Sole notifications and send GetDeviceInfo."""
@@ -194,7 +216,7 @@ class SoleClient:
             char = cli.services.get_characteristic(uuid)
             if char:
                 await cli.start_notify(char, self._on_notify)
-                _LOGGER.info("Subscribed to Sole %s notify", label)
+                _LOGGER.warning("Subscribed to Sole %s notify", label)
 
         self._subscribed = True
 
@@ -207,7 +229,7 @@ class SoleClient:
                 cli.write_gatt_char(SOLE_WRITE_UUID, frame, response=False),
                 timeout=5.0,
             )
-            _LOGGER.info("Sole: sent GetDeviceInfo, protocol established")
+            _LOGGER.warning("Sole: sent GetDeviceInfo, protocol established")
         except Exception:
             _LOGGER.warning("Sole: failed to send GetDeviceInfo", exc_info=True)
 
@@ -224,60 +246,92 @@ class SoleClient:
         - Standard opcodes: send ACK
         - ACK/SetWorkoutMode/DeviceInfo: no response needed
         """
+        _log("Sole RX: %s", data.hex(" "))
+
         parsed = _parse_frame(bytes(data))
         if parsed is None:
-            _LOGGER.debug("Sole unparseable: %s", data.hex(" "))
+            _log("Sole unparseable frame: %s", data.hex(" "))
             return
 
         opcode, payload = parsed
+        _log("Sole parsed: op=0x%02X payload=%s", opcode, payload.hex(" ") if payload else "(empty)")
         update: UpdateEventData = {}
 
         # --- Parse telemetry data ---
         if opcode == _OP_WORKOUT_DATA:
             update = _parse_workout_data(payload)
-            _LOGGER.debug("Sole WorkoutData: %s", update)
+            _log("Sole WorkoutData: %s", update)
+
+        elif opcode == _OP_WORKOUT_MODE:
+            mode_val = payload[0] if payload else -1
+            _log("Sole WorkoutMode: value=0x%02X (%d)", mode_val, mode_val)
 
         elif opcode == _OP_INCLINE and len(payload) >= 1:
             update[c.INCLINATION] = float(payload[0])
+            _log("Sole Incline: %s", payload[0])
 
         elif opcode == _OP_SPEED and len(payload) >= 1:
             update[c.SPEED_INSTANT] = payload[0] / 10.0
+            _log("Sole Speed: %s km/h", payload[0] / 10.0)
 
         elif opcode == _OP_HEART_RATE and len(payload) >= 1:
             if payload[0] > 0:
                 update[c.HEART_RATE] = payload[0]
+            _log("Sole HeartRate: %s", payload[0])
 
         elif opcode == _OP_DEVICE_INFO:
-            _LOGGER.info("Sole DeviceInfo response: %s", payload.hex(" "))
+            _log("Sole DeviceInfo response: %s", payload.hex(" "))
 
         elif opcode == _OP_END_WORKOUT:
-            _LOGGER.info("Sole EndWorkout received")
+            _log("Sole EndWorkout received, payload: %s", payload.hex(" ") if payload else "(empty)")
+
+        elif opcode == _OP_ACK:
+            _log("Sole ACK received: %s", payload.hex(" ") if payload else "(empty)")
+
+        elif opcode == _OP_WORKOUT_TARGET:
+            _log("Sole WorkoutTarget: %s", payload.hex(" ") if payload else "(empty)")
+
+        elif opcode == _OP_USER_PROFILE:
+            _log("Sole UserProfile: %s", payload.hex(" ") if payload else "(empty)")
+
+        elif opcode == _OP_PROGRAM:
+            _log("Sole Program: %s", payload.hex(" ") if payload else "(empty)")
 
         else:
-            _LOGGER.debug("Sole opcode 0x%02X: %s", opcode, payload.hex(" "))
+            _log("Sole opcode 0x%02X: %s", opcode, payload.hex(" ") if payload else "(empty)")
 
         # --- Protocol responses (always, unconditionally) ---
         if self._cli is not None:
             if opcode == _OP_WORKOUT_MODE:
-                # MUST echo the exact message back
-                asyncio.ensure_future(self._echo_raw(bytes(data)))
+                _log("Sole TX: echoing WorkoutMode back")
+                self._schedule_write(self._echo_raw(bytes(data)))
             elif opcode in _STANDARD_ACK_OPCODES:
-                # Send standard ACK
-                asyncio.ensure_future(self._send_ack(opcode))
-            # _NO_RESPONSE_OPCODES: do nothing (ACK, SetWorkoutMode, DeviceInfo)
+                _log("Sole TX: sending ACK for 0x%02X", opcode)
+                self._schedule_write(self._send_ack(opcode))
+            else:
+                _log("Sole: no response needed for 0x%02X", opcode)
 
         # --- Fire update event ---
         if update:
             event = UpdateEvent(event_id="update", event_data=update)
             self._cb(event)
 
+    def _schedule_write(self, coro) -> None:
+        """Schedule a coroutine as a task with a strong reference to prevent GC."""
+        task = asyncio.ensure_future(coro)
+        self._pending_writes.add(task)
+        task.add_done_callback(self._pending_writes.discard)
+
     async def _echo_raw(self, data: bytes) -> None:
         """Echo raw frame back to the treadmill (for WorkoutMode)."""
         try:
             if self._cli and self._cli.is_connected:
                 await self._cli.write_gatt_char(SOLE_WRITE_UUID, data, response=False)
+                _log("Sole TX sent: %s", data.hex(" "))
+            else:
+                _log("Sole TX: client not connected, cannot echo")
         except Exception:
-            _LOGGER.debug("Failed to echo WorkoutMode", exc_info=True)
+            _LOGGER.warning("Failed to echo WorkoutMode", exc_info=True)
 
     async def _send_ack(self, opcode: int) -> None:
         """Send standard ACK to the treadmill."""
@@ -285,5 +339,8 @@ class SoleClient:
             if self._cli and self._cli.is_connected:
                 ack = _build_ack(opcode)
                 await self._cli.write_gatt_char(SOLE_WRITE_UUID, ack, response=False)
+                _log("Sole TX sent: %s (ACK 0x%02X)", ack.hex(" "), opcode)
+            else:
+                _log("Sole TX: client not connected, cannot ACK 0x%02X", opcode)
         except Exception:
-            _LOGGER.debug("Failed to send Sole ACK for 0x%02X", opcode, exc_info=True)
+            _LOGGER.warning("Failed to send Sole ACK for 0x%02X", opcode, exc_info=True)
