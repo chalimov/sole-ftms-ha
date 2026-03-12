@@ -253,12 +253,12 @@ async def _patched_connect(self) -> None:
             await _patched_read_features(self._cli, self._machine_type)
         )
 
-    # Skip FTMS controller when Sole is present — the controller sends the 0xE9
-    # vendor command which interferes with Sole EndWorkout detection.
-    # Keep updater for speed data (needed for hybrid FTMS->Sole transition).
+    # When Sole is present, skip BOTH controller AND updater — pyftms
+    # subscriptions interfere with Sole EndWorkout (0x32) detection.
+    # FTMS Treadmill Data is subscribed directly via BleakClient instead
+    # (exactly like the working ble-test.py hybrid does).
     if self._cli.services.get_service(SOLE_SERVICE_UUID) is not None:
-        _LOGGER.warning("Sole service detected — skipping FTMS controller (keeping updater)")
-        await self._updater.subscribe(self._cli, self._data_uuid)
+        _LOGGER.warning("Sole service detected — skipping FTMS controller + updater")
     else:
         await self._controller.subscribe(self._cli)
         await self._updater.subscribe(self._cli, self._data_uuid)
@@ -370,14 +370,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
         _LOGGER.info("No sensors configured, using all available: %s", sensors)
 
     # --- Sole hybrid protocol support (FTMS idle -> Sole active -> disconnect -> repeat) ---
+    # Mirrors ble-test.py hybrid_cmd exactly:
+    #   FTMS_IDLE: direct FTMS Treadmill Data subscription (no pyftms controller/updater)
+    #   speed > 0: activate Sole on same connection
+    #   EndWorkout (0x32): full BLE disconnect -> reconnect -> FTMS_IDLE
+    import struct
     from .sole_client import SoleClient, has_sole_service, SOLE_SENSORS
     from .binary_sensor import WORKOUT_ACTIVE_KEY
     from pyftms.client import const as sole_const
     from pyftms.client.backends.event import UpdateEvent
 
+    FTMS_TREADMILL_DATA_UUID = "00002acd-0000-1000-8000-00805f9b34fb"
+    FTMS_CONTROL_POINT_UUID = "00002ad9-0000-1000-8000-00805f9b34fb"
+
     sole_client = None
     if hasattr(ftms, '_cli') and ftms.is_connected and has_sole_service(ftms._cli):
-        _LOGGER.info("Sole service detected, hybrid mode: FTMS until speed>0, then Sole")
+        _LOGGER.warning("Sole hybrid mode: direct FTMS subscription (no pyftms updater)")
 
         sole_activated = False
 
@@ -385,7 +393,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
             coordinator.async_set_updated_data(event)
 
         async def _hybrid_reconnect():
-            """BLE disconnect + reconnect cycle to exit BLE App mode."""
+            """BLE disconnect + reconnect to exit BLE App mode (like ble-test.py)."""
             nonlocal sole_activated
             _hybrid_state["reconnecting"] = True
             _LOGGER.warning("Sole EndWorkout -> BLE disconnect/reconnect")
@@ -397,12 +405,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
             except Exception:
                 _LOGGER.debug("Disconnect error", exc_info=True)
 
-            # Force pyftms to re-establish connection
             ftms._need_connect = True
 
             try:
                 await ftms.connect()
-                _LOGGER.warning("Reconnected in FTMS-only mode, START button unblocked")
+                _LOGGER.warning("Reconnected, START button unblocked")
+                # Re-subscribe to FTMS Treadmill Data directly after reconnect
+                await _subscribe_ftms_direct(ftms._cli)
             except Exception:
                 _LOGGER.warning("Reconnect failed", exc_info=True)
 
@@ -421,36 +430,65 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
         )
         sensors = list(SOLE_SENSORS)
 
-        # Override FTMS callback: detect speed>0 to activate Sole on same connection
-        def _hybrid_ftms_callback(event):
+        # Direct FTMS Treadmill Data notification handler — parse speed like ble-test.py
+        def _on_ftms_raw_notify(_char, data: bytearray):
+            """Parse FTMS Treadmill Data directly (like ble-test.py on_ftms_notify_hybrid)."""
             nonlocal sole_activated
-            coordinator.async_set_updated_data(event)
+            if len(data) < 4:
+                return
+            flags = struct.unpack('<H', data[:2])[0]
+            # Bit 0 = 0 means Instantaneous Speed present (uint16, 0.01 km/h)
+            if flags & 0x0001:
+                return  # speed not present
+            speed = struct.unpack('<H', data[2:4])[0] * 0.01
+
+            # Push speed through coordinator so sensors get it
+            update = {sole_const.SPEED_INSTANT: speed}
+            coordinator.async_set_updated_data(
+                UpdateEvent(event_id="update", event_data=update)
+            )
 
             if (
                 not sole_activated
                 and not _hybrid_state["reconnecting"]
-                and hasattr(event, 'event_data')
-                and event.event_id == "update"
+                and speed > 0
             ):
-                speed = event.event_data.get(sole_const.SPEED_INSTANT)
-                if speed is not None and speed > 0:
-                    sole_activated = True
-                    _LOGGER.warning("FTMS speed>0, activating Sole protocol")
+                sole_activated = True
+                _LOGGER.warning("FTMS speed=%.2f > 0, activating Sole protocol", speed)
 
-                    async def _activate():
-                        nonlocal sole_activated
-                        try:
-                            await sole_client.subscribe(ftms._cli)
-                            coordinator.async_set_updated_data(
-                                UpdateEvent(event_id="update", event_data={WORKOUT_ACTIVE_KEY: True})
-                            )
-                        except Exception:
-                            _LOGGER.warning("Failed to activate Sole", exc_info=True)
-                            sole_activated = False
+                async def _activate():
+                    nonlocal sole_activated
+                    try:
+                        await sole_client.subscribe(ftms._cli)
+                        coordinator.async_set_updated_data(
+                            UpdateEvent(event_id="update", event_data={WORKOUT_ACTIVE_KEY: True})
+                        )
+                    except Exception:
+                        _LOGGER.warning("Failed to activate Sole", exc_info=True)
+                        sole_activated = False
 
-                    hass.async_create_task(_activate())
+                hass.async_create_task(_activate())
 
-        ftms.set_callback(_hybrid_ftms_callback)
+        async def _subscribe_ftms_direct(cli):
+            """Subscribe to FTMS Treadmill Data + send 0xE9 (like ble-test.py connect_ftms)."""
+            ch = cli.services.get_characteristic(FTMS_TREADMILL_DATA_UUID)
+            if ch:
+                await cli.start_notify(ch, _on_ftms_raw_notify)
+                _LOGGER.warning("Subscribed to FTMS Treadmill Data (direct)")
+
+            # Send Request Control + 0xE9 vendor command (like ble-test.py)
+            cp_ch = cli.services.get_characteristic(FTMS_CONTROL_POINT_UUID)
+            if cp_ch:
+                await cli.start_notify(cp_ch, lambda _c, _d: None)
+                import asyncio
+                await asyncio.sleep(0.3)
+                await cli.write_gatt_char(cp_ch, bytes([0x00]), response=True)
+                await asyncio.sleep(0.3)
+                await cli.write_gatt_char(cp_ch, bytes([0xE9]), response=True)
+                _LOGGER.warning("FTMS: sent Request Control + 0xE9")
+
+        # Initial subscription after connect
+        await _subscribe_ftms_direct(ftms._cli)
     # --- End Sole hybrid support ---
 
     entry.runtime_data = FtmsData(
