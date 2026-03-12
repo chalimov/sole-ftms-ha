@@ -248,7 +248,7 @@ async def _patched_connect(self) -> None:
         from pyftms.client.properties import read_device_info
         self._device_info = await read_device_info(self._cli)
 
-    if not hasattr(self, "_features"):
+    if not hasattr(self, "_m_features"):
         self._m_features, self._m_settings, self._settings_ranges = (
             await _patched_read_features(self._cli, self._machine_type)
         )
