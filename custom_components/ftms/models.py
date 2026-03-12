@@ -25,3 +25,4 @@ class FtmsData:
     coordinator: DataCoordinator
     sensors: list[str]
     sole_client: SoleClient | None = None
+    external_hr_entity: str | None = None

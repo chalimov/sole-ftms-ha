@@ -33,7 +33,7 @@ from pyftms import (
 )
 from pyftms.client.const import FTMS_UUID
 
-from .const import DOMAIN
+from .const import CONF_EXTERNAL_HR_ENTITY, DOMAIN
 from .sole_client import SOLE_DEVICE_NAMES, SOLE_SERVICE_UUID, SOLE_SENSORS
 
 _LOGGER = logging.getLogger(__name__)
@@ -78,14 +78,20 @@ class OptionsFlowHandler(OptionsFlowWithConfigEntry):
         """Options Handler."""
 
         if user_input is not None:
+            # Store empty string as None
+            if not user_input.get(CONF_EXTERNAL_HR_ENTITY):
+                user_input.pop(CONF_EXTERNAL_HR_ENTITY, None)
             return self.async_create_entry(title="", data=user_input)
 
         address = self.config_entry.data[CONF_ADDRESS]
 
-        if not (srv_info := async_last_service_info(self.hass, address)):
-            return self.async_abort(reason="no_devices_found")
-
-        cli = _get_client_safe(srv_info.device, srv_info.advertisement)
+        # Get sensor options from live device if available, else fall back to current config
+        srv_info = async_last_service_info(self.hass, address)
+        if srv_info:
+            cli = _get_client_safe(srv_info.device, srv_info.advertisement)
+            sensor_options = list(cli.available_properties)
+        else:
+            sensor_options = self.config_entry.options.get(CONF_SENSORS, [])
 
         schema = vol.Schema(
             {
@@ -93,11 +99,20 @@ class OptionsFlowHandler(OptionsFlowWithConfigEntry):
                     {
                         "select": {
                             "multiple": True,
-                            "options": list(cli.available_properties),
+                            "options": sensor_options,
                             "translation_key": CONF_SENSORS,
                         }
                     }
-                )
+                ),
+                vol.Optional(CONF_EXTERNAL_HR_ENTITY): selector(
+                    {
+                        "entity": {
+                            "filter": {
+                                "domain": "sensor",
+                            },
+                        }
+                    }
+                ),
             }
         )
 
@@ -348,10 +363,14 @@ class FTMSConfigFlow(ConfigFlow, domain=DOMAIN):
                 s3 = f"({dev_info.get('serial_number', unique_id)})"
                 title = " ".join((s1, s2, s3))
 
+            options_data = {CONF_SENSORS: user_input[CONF_SENSORS]}
+            if user_input.get(CONF_EXTERNAL_HR_ENTITY):
+                options_data[CONF_EXTERNAL_HR_ENTITY] = user_input[CONF_EXTERNAL_HR_ENTITY]
+
             return self.async_create_entry(
                 title=title,
                 data={CONF_ADDRESS: self._ftms.address},
-                options={CONF_SENSORS: user_input[CONF_SENSORS]},
+                options=options_data,
             )
 
         options = (
@@ -368,6 +387,15 @@ class FTMSConfigFlow(ConfigFlow, domain=DOMAIN):
                             "multiple": True,
                             "options": options,
                             "translation_key": CONF_SENSORS,
+                        }
+                    }
+                ),
+                vol.Optional(CONF_EXTERNAL_HR_ENTITY): selector(
+                    {
+                        "entity": {
+                            "filter": {
+                                "domain": "sensor",
+                            },
                         }
                     }
                 ),

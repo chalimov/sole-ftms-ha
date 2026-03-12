@@ -31,7 +31,7 @@ from pyftms.client.properties.features import (
 )
 from pyftms.serializer import NumSerializer
 
-from .const import DOMAIN
+from .const import CONF_EXTERNAL_HR_ENTITY, DOMAIN
 from .coordinator import DataCoordinator
 from .models import FtmsData
 
@@ -493,6 +493,39 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
         await _subscribe_ftms_direct(ftms._cli)
     # --- End Sole hybrid support ---
 
+    # --- External HR monitor support ---
+    ext_hr_entity_id = entry.options.get(CONF_EXTERNAL_HR_ENTITY)
+    if ext_hr_entity_id:
+        from homeassistant.helpers.event import async_track_state_change_event
+
+        @callback
+        def _on_external_hr_change(event):
+            """Push external HR monitor value through the coordinator."""
+            new_state = event.data.get("new_state")
+            if new_state is None or new_state.state in ("unknown", "unavailable", ""):
+                return
+            try:
+                hr_value = int(float(new_state.state))
+            except (ValueError, TypeError):
+                return
+            if hr_value <= 0:
+                return
+            from pyftms.client import const as hr_const
+            from pyftms.client.backends.event import UpdateEvent
+            coordinator.async_set_updated_data(
+                UpdateEvent(event_id="update", event_data={hr_const.HEART_RATE: hr_value})
+            )
+
+        entry.async_on_unload(
+            async_track_state_change_event(hass, [ext_hr_entity_id], _on_external_hr_change)
+        )
+        # Ensure heart_rate is in the sensor list so the entity exists
+        from pyftms.client import const as hr_const
+        if hr_const.HEART_RATE not in sensors:
+            sensors.append(hr_const.HEART_RATE)
+        _LOGGER.info("External HR monitor configured: %s", ext_hr_entity_id)
+    # --- End external HR support ---
+
     entry.runtime_data = FtmsData(
         entry_id=entry.entry_id,
         unique_id=unique_id,
@@ -501,6 +534,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
         coordinator=coordinator,
         sensors=sensors,
         sole_client=sole_client,
+        external_hr_entity=ext_hr_entity_id,
     )
 
     @callback
@@ -545,5 +579,7 @@ async def _async_entry_update_handler(
 ) -> None:
     """Options update handler."""
 
-    if entry.options[CONF_SENSORS] != entry.runtime_data.sensors:
+    sensors_changed = entry.options.get(CONF_SENSORS) != entry.runtime_data.sensors
+    hr_changed = entry.options.get(CONF_EXTERNAL_HR_ENTITY) != entry.runtime_data.external_hr_entity
+    if sensors_changed or hr_changed:
         hass.config_entries.async_schedule_reload(entry.entry_id)
