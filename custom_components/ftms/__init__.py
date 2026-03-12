@@ -244,14 +244,16 @@ async def _patched_connect(self) -> None:
 
     _LOGGER.debug("Connection success (patched).")
 
+    # Sole F63 only — hardcode features, skip GATT feature read entirely.
     if not hasattr(self, "_device_info"):
-        from pyftms.client.properties import read_device_info
-        self._device_info = await read_device_info(self._cli)
-
+        self._device_info = {
+            "manufacturer": "Sole Fitness",
+            "model": "F63",
+        }
     if not hasattr(self, "_m_features"):
-        self._m_features, self._m_settings, self._settings_ranges = (
-            await _patched_read_features(self._cli, self._machine_type)
-        )
+        self._m_features = MachineFeatures(0)
+        self._m_settings = MachineSettings(0)
+        self._settings_ranges = MappingProxyType({})
 
     # When Sole is present, skip BOTH controller AND updater — pyftms
     # subscriptions interfere with Sole EndWorkout (0x32) detection.
