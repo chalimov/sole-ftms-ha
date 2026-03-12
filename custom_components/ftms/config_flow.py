@@ -350,13 +350,19 @@ class FTMSConfigFlow(ConfigFlow, domain=DOMAIN):
                 options={CONF_SENSORS: user_input[CONF_SENSORS]},
             )
 
+        options = (
+            self._suggested_sensors
+            if self._is_sole_device()
+            else list(self._ftms.available_properties)
+        )
+
         schema = vol.Schema(
             {
                 vol.Required(CONF_SENSORS): selector(
                     {
                         "select": {
                             "multiple": True,
-                            "options": list(self._ftms.available_properties),
+                            "options": options,
                             "translation_key": CONF_SENSORS,
                         }
                     }
