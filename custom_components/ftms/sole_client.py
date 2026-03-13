@@ -29,14 +29,15 @@ _LOGGER = logging.getLogger(__name__)
 _FILE_LOGGER = logging.getLogger("sole_debug_file")
 _FILE_LOGGER.setLevel(logging.DEBUG)
 _FILE_LOGGER.propagate = False
-try:
-    import os
-    os.makedirs("/config/www", exist_ok=True)
-    _fh = logging.FileHandler("/config/www/sole_debug.log", mode="w")
-    _fh.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
-    _FILE_LOGGER.addHandler(_fh)
-except Exception:
-    pass  # not running on HA, ignore
+if not _FILE_LOGGER.handlers:
+    try:
+        import os
+        os.makedirs("/config/www", exist_ok=True)
+        _fh = logging.FileHandler("/config/www/sole_debug.log", mode="w")
+        _fh.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
+        _FILE_LOGGER.addHandler(_fh)
+    except Exception:
+        pass  # not running on HA, ignore
 
 
 def _log(msg, *args):
@@ -245,6 +246,9 @@ class SoleClient:
         """Reset state on disconnect."""
         self._subscribed = False
         self._cli = None
+        for task in self._pending_writes:
+            task.cancel()
+        self._pending_writes.clear()
 
     def _on_notify(self, _char: BleakGATTCharacteristic, data: bytearray) -> None:
         """Handle incoming Sole notification.
