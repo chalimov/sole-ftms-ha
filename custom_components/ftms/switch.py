@@ -60,13 +60,11 @@ class ConnectionSwitchEntity(FtmsEntity, SwitchEntity, RestoreEntity):
 
         try:
             await self.ftms.connect()
-
-        except BleakError:
-            self.hass.config_entries.async_schedule_reload(self._data.entry_id)
-
-        finally:
             self._attr_is_on = True
-            self.async_write_ha_state()
+        except BleakError:
+            self._attr_is_on = False
+            self.hass.config_entries.async_schedule_reload(self._data.entry_id)
+        self.async_write_ha_state()
 
     @override
     async def async_turn_off(self, **kwargs: Any) -> None:
