@@ -382,7 +382,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
             _LOGGER.info("No sensors configured, using all available: %s", sensors)
     else:
         # Offline path — use static Sole F63 info, entities will show unavailable
-        _LOGGER.info("Device %s not available — setting up entities as unavailable", address)
+        _LOGGER.warning("Device %s not available — setting up entities as unavailable", address)
         from .sole_client import SOLE_SENSORS
         unique_id = "".join(x for x in address if x.isalnum()).lower()
         device_info = dr.DeviceInfo(
