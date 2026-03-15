@@ -21,7 +21,7 @@ class FtmsData:
     entry_id: str
     unique_id: str
     device_info: DeviceInfo
-    ftms: FitnessMachine
+    ftms: FitnessMachine | None
     coordinator: DataCoordinator
     sensors: list[str]
     sole_client: SoleClient | None = None

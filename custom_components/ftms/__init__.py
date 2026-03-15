@@ -299,8 +299,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> boo
         # async_unload_platforms, so hybrid tasks are already cancelled here.
         if entry.runtime_data.sole_client is not None:
             entry.runtime_data.sole_client.reset()
-        await entry.runtime_data.ftms.disconnect()
-        bluetooth.async_rediscover_address(hass, entry.runtime_data.ftms.address)
+        if entry.runtime_data.ftms is not None:
+            await entry.runtime_data.ftms.disconnect()
+            bluetooth.async_rediscover_address(hass, entry.runtime_data.ftms.address)
 
     return unload_ok
 
@@ -310,8 +311,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
 
     address: str = entry.data[CONF_ADDRESS]
 
-    if not (srv_info := bluetooth.async_last_service_info(hass, address)):
-        raise ConfigEntryNotReady(translation_key="device_not_found")
+    srv_info = bluetooth.async_last_service_info(hass, address)
 
     # Hybrid protocol state: None if not Sole, _HybridState enum if Sole detected.
     # Tasks spawned by the hybrid protocol are tracked for cancellation on unload.
@@ -330,62 +330,70 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
         if ftms_.need_connect:
             hass.config_entries.async_schedule_reload(entry.entry_id)
 
-    try:
-        ftms = _get_client_safe(
-            srv_info.device,
-            srv_info.advertisement,
-            on_disconnect=_on_disconnect,
-        )
+    # --- Handle offline device gracefully ---
+    ftms = None
+    if srv_info:
+        try:
+            ftms = _get_client_safe(
+                srv_info.device,
+                srv_info.advertisement,
+                on_disconnect=_on_disconnect,
+            )
+        except pyftms.NotFitnessMachineError:
+            _LOGGER.warning("Device found but not a valid FTMS device")
 
-    except pyftms.NotFitnessMachineError:
-        raise ConfigEntryNotReady(translation_key="ftms_error")
+    if ftms:
+        try:
+            await ftms.connect()
+        except Exception as exc:
+            _LOGGER.warning("FTMS connect failed: %s — entities will show unavailable", exc)
+            ftms = None
 
     coordinator = DataCoordinator(hass, ftms)
 
-    try:
-        await ftms.connect()
+    if ftms and ftms.is_connected:
+        # Online path — get device info from connected device
+        try:
+            dev_info = ftms.device_info
+        except AttributeError:
+            dev_info = {}
 
-    except Exception as exc:
-        _LOGGER.warning("FTMS connect failed: %s", exc)
-        raise ConfigEntryNotReady(translation_key="connection_failed") from exc
+        _LOGGER.debug(f"Device Information: {dev_info}")
+        _LOGGER.debug(f"Machine type: {ftms.machine_type.name}")
 
-    assert ftms.machine_type.name
+        unique_id = "".join(
+            x for x in dev_info.get("serial_number", address) if x.isalnum()
+        ).lower()
 
-    try:
-        dev_info = ftms.device_info
-    except AttributeError:
-        dev_info = {}
+        device_info_kwargs = {k: v for k, v in dev_info.items() if k in (
+            "manufacturer", "model", "sw_version", "hw_version"
+        )}
 
-    _LOGGER.debug(f"Device Information: {dev_info}")
-    _LOGGER.debug(f"Machine type: {ftms.machine_type.name}")
-    _LOGGER.debug(f"Available sensors: {ftms.available_properties}")
-    try:
-        _LOGGER.debug(f"Supported settings: {ftms.supported_settings}")
-        _LOGGER.debug(f"Supported ranges: {ftms.supported_ranges}")
-    except AttributeError:
-        _LOGGER.debug("Supported settings/ranges not available")
+        device_info = dr.DeviceInfo(
+            connections={(dr.CONNECTION_BLUETOOTH, address)},
+            identifiers={(DOMAIN, unique_id)},
+            translation_key=ftms.machine_type.name.lower(),
+            **device_info_kwargs,
+        )
 
-    unique_id = "".join(
-        x for x in dev_info.get("serial_number", address) if x.isalnum()
-    ).lower()
-
-    _LOGGER.debug(f"Registered new FTMS device. UniqueID is '{unique_id}'.")
-
-    device_info_kwargs = {k: v for k, v in dev_info.items() if k in (
-        "manufacturer", "model", "sw_version", "hw_version"
-    )}
-
-    device_info = dr.DeviceInfo(
-        connections={(dr.CONNECTION_BLUETOOTH, ftms.address)},
-        identifiers={(DOMAIN, unique_id)},
-        translation_key=ftms.machine_type.name.lower(),
-        **device_info_kwargs,
-    )
-
-    sensors = entry.options.get(CONF_SENSORS, [])
-    if not sensors:
-        sensors = list(ftms.available_properties)
-        _LOGGER.info("No sensors configured, using all available: %s", sensors)
+        sensors = entry.options.get(CONF_SENSORS, [])
+        if not sensors:
+            sensors = list(ftms.available_properties)
+            _LOGGER.info("No sensors configured, using all available: %s", sensors)
+    else:
+        # Offline path — use static Sole F63 info, entities will show unavailable
+        _LOGGER.info("Device %s not available — setting up entities as unavailable", address)
+        from .sole_client import SOLE_SENSORS
+        unique_id = "".join(x for x in address if x.isalnum()).lower()
+        device_info = dr.DeviceInfo(
+            connections={(dr.CONNECTION_BLUETOOTH, address)},
+            identifiers={(DOMAIN, unique_id)},
+            name="Treadmill",
+            manufacturer="Sole Fitness",
+            model="F63",
+            translation_key="treadmill",
+        )
+        sensors = entry.options.get(CONF_SENSORS, []) or list(SOLE_SENSORS)
 
     # --- Sole hybrid protocol support ---
     # State machine: FTMS_IDLE -> ACTIVATING -> SOLE_ACTIVE -> RECONNECTING -> FTMS_IDLE
@@ -405,7 +413,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
     _RECONNECT_BASE_DELAY = 2  # seconds
 
     sole_client = None
-    if hasattr(ftms, '_cli') and ftms.is_connected and has_sole_service(ftms._cli):
+    if ftms and hasattr(ftms, '_cli') and ftms.is_connected and has_sole_service(ftms._cli):
         _LOGGER.warning("Sole hybrid mode: direct FTMS subscription (no pyftms updater)")
 
         _hybrid_st = _HybridState.FTMS_IDLE
@@ -588,11 +596,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
         srv_info: bluetooth.BluetoothServiceInfoBleak,
         change: bluetooth.BluetoothChange,
     ) -> None:
-        """Update from a ble callback."""
-
-        ftms.set_ble_device_and_advertisement_data(
-            srv_info.device, srv_info.advertisement
-        )
+        """Update from a ble callback. Reload entry when device appears while offline."""
+        if ftms is not None:
+            ftms.set_ble_device_and_advertisement_data(
+                srv_info.device, srv_info.advertisement
+            )
+        else:
+            # Device was offline at setup — reload to establish connection
+            _LOGGER.info("Device %s appeared, reloading integration", address)
+            hass.config_entries.async_schedule_reload(entry.entry_id)
 
     entry.async_on_unload(
         bluetooth.async_register_callback(
@@ -608,14 +620,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
 
     entry.async_on_unload(entry.add_update_listener(_async_entry_update_handler))
 
-    async def _async_hass_stop_handler(event: Event) -> None:
-        """Close the connection."""
+    if ftms is not None:
+        async def _async_hass_stop_handler(event: Event) -> None:
+            """Close the connection."""
+            await ftms.disconnect()
 
-        await ftms.disconnect()
-
-    entry.async_on_unload(
-        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _async_hass_stop_handler)
-    )
+        entry.async_on_unload(
+            hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _async_hass_stop_handler)
+        )
 
     return True
 

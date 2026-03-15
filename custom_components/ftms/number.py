@@ -79,7 +79,7 @@ async def async_setup_entry(
     if data.sole_client is not None:
         # Sole mode: add Sole incline number entity
         entities.append(SoleInclineEntity(entry=entry))
-    else:
+    elif data.ftms is not None:
         # Standard FTMS number entities
         ranges_ = data.ftms.supported_ranges
         for desc in _ENTITIES:

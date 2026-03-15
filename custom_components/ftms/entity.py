@@ -39,7 +39,9 @@ class FtmsEntity(CoordinatorEntity[DataCoordinator], Entity):
 
     @property
     def available(self) -> bool:
-        return self.ftms.is_connected and super().available
+        if self._data.ftms is None:
+            return False
+        return self._data.ftms.is_connected and super().available
 
     @property
     def ftms(self):

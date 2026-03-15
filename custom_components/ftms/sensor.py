@@ -301,13 +301,15 @@ class FtmsSensorEntity(FtmsEntity, SensorEntity):
     def __init__(self, entry, description) -> None:
         super().__init__(entry, description)
 
-        if (x := self.ftms.get_property(self.key)) is None:
+        if self.ftms is None:
+            self._attr_native_value = None
+        elif (x := self.ftms.get_property(self.key)) is None:
             x = 0
-
-        elif isinstance(x, Enum):
-            x = x.name.lower()
-
-        self._attr_native_value = x
+            self._attr_native_value = x
+        else:
+            if isinstance(x, Enum):
+                x = x.name.lower()
+            self._attr_native_value = x
 
     @callback
     def _handle_coordinator_update(self) -> None:
