@@ -411,7 +411,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
         _hybrid_st = _HybridState.FTMS_IDLE
 
         def _on_sole_event(event):
-            coordinator.async_set_updated_data(event)
+            # Suppress Sole HR when external HR monitor is configured —
+            # the treadmill sends its own (smoothed/delayed) HR via WorkoutData
+            # byte 6 which conflicts with the accurate external HR source.
+            ext_hr = entry.options.get(CONF_EXTERNAL_HR_ENTITY)
+            if ext_hr and sole_const.HEART_RATE in event.event_data:
+                del event.event_data[sole_const.HEART_RATE]
+            if event.event_data:
+                coordinator.async_set_updated_data(event)
 
         async def _subscribe_ftms_direct(cli):
             """Subscribe to FTMS Treadmill Data + send 0xE9 vendor command."""

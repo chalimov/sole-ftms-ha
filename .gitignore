@@ -24,6 +24,12 @@ tools/
 !hacs.json
 !requirements*.txt
 
+# Local scripts (contain credentials / are dev-only)
+ha-deploy.py
+ha-logs.py
+ble-test.py
+sole_protocol.md
+
 # Virtual environments
 venv/
 .venv/
