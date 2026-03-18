@@ -200,9 +200,11 @@ class SoleClient:
         self,
         callback: SoleCallback,
         on_end_workout: Callable[[], None] | None = None,
+        on_reconnect_needed: Callable[[], None] | None = None,
     ) -> None:
         self._cb = callback
         self._on_end_workout = on_end_workout
+        self._on_reconnect_needed = on_reconnect_needed
         self._subscribed = False
         self._cli: BleakClient | None = None
         # Must hold strong references to tasks to prevent GC before completion.
@@ -388,8 +390,17 @@ class SoleClient:
         await self._send_sole_command(0x03)
 
     async def stop_belt(self) -> None:
-        """Stop the belt (Sole 0xF1 0x06)."""
+        """Stop the belt (Sole 0xF1 0x06).
+
+        After stopping, signals a reconnect request so the hybrid protocol
+        can BLE-cycle to unblock the physical START button. This is NOT
+        end-of-workout — the treadmill's workout state survives the BLE
+        disconnect and resumes when the user presses START on the console.
+        """
         await self._send_sole_command(0x06)
+        _log("Stop belt sent via HA — requesting reconnect to unblock START")
+        if self._on_reconnect_needed:
+            self._on_reconnect_needed()
 
     async def set_incline(self, percent: float) -> None:
         """Set absolute incline via FTMS Control Point (opcode 0x03).

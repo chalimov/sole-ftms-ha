@@ -411,12 +411,44 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
 
     _RECONNECT_MAX_RETRIES = 3
     _RECONNECT_BASE_DELAY = 2  # seconds
+    _SOLE_IDLE_TIMEOUT = 30  # seconds of speed=0 before assuming workout ended
 
     sole_client = None
     if ftms and hasattr(ftms, '_cli') and ftms.is_connected and has_sole_service(ftms._cli):
         _LOGGER.warning("Sole hybrid mode: direct FTMS subscription (no pyftms updater)")
 
         _hybrid_st = _HybridState.FTMS_IDLE
+
+        # --- Idle timer: fallback for missing EndWorkout (0x32) ---
+        # If speed stays at 0 for _SOLE_IDLE_TIMEOUT seconds while SOLE_ACTIVE,
+        # force a reconnect to unblock the START button.
+        _idle_timer_unsub = None
+
+        def _start_idle_timer():
+            nonlocal _idle_timer_unsub
+            if _idle_timer_unsub is not None:
+                return  # Timer already running
+
+            @callback
+            def _idle_timeout(_now):
+                nonlocal _idle_timer_unsub
+                _idle_timer_unsub = None
+                if _hybrid_st == _HybridState.SOLE_ACTIVE:
+                    _LOGGER.warning(
+                        "Speed-zero timeout (%ds) — reconnecting to unblock START (workout continues)",
+                        _SOLE_IDLE_TIMEOUT,
+                    )
+                    _track_task(hass.async_create_task(_hybrid_reconnect(is_pause=True)))
+
+            from homeassistant.helpers.event import async_call_later
+            _idle_timer_unsub = async_call_later(hass, _SOLE_IDLE_TIMEOUT, _idle_timeout)
+            _LOGGER.debug("Idle timer started (%ds)", _SOLE_IDLE_TIMEOUT)
+
+        def _cancel_idle_timer():
+            nonlocal _idle_timer_unsub
+            if _idle_timer_unsub is not None:
+                _idle_timer_unsub()
+                _idle_timer_unsub = None
 
         def _on_sole_event(event):
             # Suppress Sole HR when external HR monitor is configured —
@@ -425,6 +457,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
             ext_hr = entry.options.get(CONF_EXTERNAL_HR_ENTITY)
             if ext_hr and sole_const.HEART_RATE in event.event_data:
                 del event.event_data[sole_const.HEART_RATE]
+
+            # Track speed for idle timeout (Sole WorkoutData also reports speed)
+            if _hybrid_st == _HybridState.SOLE_ACTIVE:
+                speed = event.event_data.get(sole_const.SPEED_INSTANT)
+                if speed is not None:
+                    if speed == 0:
+                        _start_idle_timer()
+                    else:
+                        _cancel_idle_timer()
+
             if event.event_data:
                 coordinator.async_set_updated_data(event)
 
@@ -459,13 +501,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
                 _LOGGER.warning("Failed to activate Sole", exc_info=True)
                 _hybrid_st = _HybridState.FTMS_IDLE
 
-        async def _hybrid_reconnect():
+        async def _hybrid_reconnect(is_pause=False):
             """BLE disconnect + reconnect to exit BLE App mode, with retry."""
             nonlocal _hybrid_st
+            _cancel_idle_timer()
             if _hybrid_st == _HybridState.RECONNECTING:
-                return  # Already reconnecting (duplicate EndWorkout)
+                return  # Already reconnecting (duplicate trigger)
+            prev_state = _hybrid_st
             _hybrid_st = _HybridState.RECONNECTING
-            _LOGGER.warning("Sole EndWorkout -> BLE disconnect/reconnect")
+            _LOGGER.warning(
+                "Hybrid reconnect (was %s, pause=%s) -> BLE disconnect/reconnect",
+                prev_state.value, is_pause,
+            )
 
             sole_client.reset()
 
@@ -496,19 +543,32 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
                 return
 
             _hybrid_st = _HybridState.FTMS_IDLE
-            coordinator.async_set_updated_data(
-                UpdateEvent(event_id="update", event_data={WORKOUT_ACTIVE_KEY: False})
-            )
+            if not is_pause:
+                coordinator.async_set_updated_data(
+                    UpdateEvent(event_id="update", event_data={WORKOUT_ACTIVE_KEY: False})
+                )
 
         def _on_end_workout():
             """Handle Sole EndWorkout — only reconnect from active states."""
+            _cancel_idle_timer()
+            if _hybrid_st not in (_HybridState.SOLE_ACTIVE, _HybridState.ACTIVATING):
+                _LOGGER.warning("EndWorkout received but state=%s, ignoring", _hybrid_st.value if _hybrid_st else None)
+                return
+            _LOGGER.warning("EndWorkout received in state=%s, triggering reconnect", _hybrid_st.value)
+            _track_task(hass.async_create_task(_hybrid_reconnect()))
+
+        def _on_reconnect_needed():
+            """Handle pause/stop via HA — reconnect to unblock START, but keep workout alive."""
+            _cancel_idle_timer()
             if _hybrid_st not in (_HybridState.SOLE_ACTIVE, _HybridState.ACTIVATING):
                 return
-            _track_task(hass.async_create_task(_hybrid_reconnect()))
+            _LOGGER.warning("HA-initiated stop — reconnecting to unblock START (workout continues)")
+            _track_task(hass.async_create_task(_hybrid_reconnect(is_pause=True)))
 
         sole_client = SoleClient(
             callback=_on_sole_event,
             on_end_workout=_on_end_workout,
+            on_reconnect_needed=_on_reconnect_needed,
         )
         sensors = list(SOLE_SENSORS)
 
@@ -531,10 +591,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
                 _hybrid_st = _HybridState.ACTIVATING
                 _LOGGER.warning("FTMS speed=%.2f > 0, activating Sole protocol", speed)
                 _track_task(hass.async_create_task(_activate()))
+            elif _hybrid_st == _HybridState.SOLE_ACTIVE:
+                if speed == 0:
+                    _start_idle_timer()
+                else:
+                    _cancel_idle_timer()
 
         # Register cleanup for hybrid tasks on unload
         @callback
         def _cancel_hybrid_tasks():
+            _cancel_idle_timer()
             for task in list(_hybrid_tasks):
                 task.cancel()
         entry.async_on_unload(_cancel_hybrid_tasks)
