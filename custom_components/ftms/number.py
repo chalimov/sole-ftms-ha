@@ -76,7 +76,7 @@ async def async_setup_entry(
     data = entry.runtime_data
     entities = []
 
-    if data.sole_client is not None:
+    if data.is_sole:
         # Sole mode: add Sole incline number entity
         entities.append(SoleInclineEntity(entry=entry))
     elif data.ftms is not None:

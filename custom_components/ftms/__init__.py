@@ -580,6 +580,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
         _LOGGER.info("External HR monitor configured: %s", ext_hr_entity_id)
     # --- End external HR support ---
 
+    # Sole is detected either online (sole_client created) or offline (fallback path)
+    is_sole = sole_client is not None or ftms is None
+
     entry.runtime_data = FtmsData(
         entry_id=entry.entry_id,
         unique_id=unique_id,
@@ -587,6 +590,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
         ftms=ftms,
         coordinator=coordinator,
         sensors=sensors,
+        is_sole=is_sole,
         sole_client=sole_client,
         external_hr_entity=ext_hr_entity_id,
     )

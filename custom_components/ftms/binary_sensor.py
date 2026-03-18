@@ -42,7 +42,7 @@ async def async_setup_entry(
     entities = [ConnectionStatusSensor(entry=entry)]
 
     # Only create workout_active sensor when Sole hybrid mode is active
-    if data.sole_client is not None:
+    if data.is_sole:
         entities.append(WorkoutActiveSensor(entry=entry))
 
     async_add_entities(entities)

@@ -36,7 +36,7 @@ async def async_setup_entry(
     data = entry.runtime_data
     entities = []
 
-    if data.sole_client is not None:
+    if data.is_sole:
         # Sole mode: only add Sole-specific control buttons
         for key, name in [
             (SOLE_SPEED_UP, "Speed up"),

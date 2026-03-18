@@ -53,6 +53,7 @@ async def async_get_config_entry_diagnostics(
             pass
 
     diag["sole"] = {
+        "is_sole": data.is_sole,
         "hybrid_active": data.sole_client is not None,
     }
 

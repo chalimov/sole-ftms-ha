@@ -24,5 +24,6 @@ class FtmsData:
     ftms: FitnessMachine | None
     coordinator: DataCoordinator
     sensors: list[str]
+    is_sole: bool = False
     sole_client: SoleClient | None = None
     external_hr_entity: str | None = None
