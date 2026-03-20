@@ -412,12 +412,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
     _RECONNECT_MAX_RETRIES = 3
     _RECONNECT_BASE_DELAY = 2  # seconds
     _SOLE_IDLE_TIMEOUT = 60  # seconds of speed=0 before assuming workout ended
+    _SOLE_ACTIVATION_THRESHOLD = 3  # consecutive FTMS speed > 0 before activating Sole
 
     sole_client = None
     if ftms and hasattr(ftms, '_cli') and ftms.is_connected and has_sole_service(ftms._cli):
         _LOGGER.warning("Sole hybrid mode: direct FTMS subscription (no pyftms updater)")
 
         _hybrid_st = _HybridState.FTMS_IDLE
+        _speed_positive_count = 0  # consecutive FTMS notifications with speed > 0
 
         # --- Idle timer: fallback for missing EndWorkout (0x32) ---
         # If speed stays at 0 for _SOLE_IDLE_TIMEOUT seconds while SOLE_ACTIVE,
@@ -488,7 +490,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
 
         async def _activate():
             """Activate Sole protocol on the existing BLE connection."""
-            nonlocal _hybrid_st
+            nonlocal _hybrid_st, _speed_positive_count
+            _speed_positive_count = 0
             if _hybrid_st != _HybridState.ACTIVATING:
                 return  # State changed while task was queued
             try:
@@ -503,8 +506,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
 
         async def _hybrid_reconnect(is_pause=False):
             """BLE disconnect + reconnect to exit BLE App mode, with retry."""
-            nonlocal _hybrid_st
+            nonlocal _hybrid_st, _speed_positive_count
             _cancel_idle_timer()
+            _speed_positive_count = 0
             if _hybrid_st == _HybridState.RECONNECTING:
                 return  # Already reconnecting (duplicate trigger)
             prev_state = _hybrid_st
@@ -569,23 +573,32 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
 
         def _on_ftms_raw_notify(_char, data: bytearray):
             """Parse FTMS Treadmill Data directly — trigger Sole activation on speed > 0."""
-            nonlocal _hybrid_st
+            nonlocal _hybrid_st, _speed_positive_count
             if len(data) < 4:
                 return
             flags = struct.unpack('<H', data[:2])[0]
             if flags & 0x0001:
                 return  # speed not present
             speed = struct.unpack('<H', data[2:4])[0] * 0.01
+            _LOGGER.debug("FTMS raw: speed=%.2f state=%s count=%d", speed, _hybrid_st.value, _speed_positive_count)
 
             update = {sole_const.SPEED_INSTANT: speed}
             coordinator.async_set_updated_data(
                 UpdateEvent(event_id="update", event_data=update)
             )
 
-            if _hybrid_st == _HybridState.FTMS_IDLE and speed > 0:
-                _hybrid_st = _HybridState.ACTIVATING
-                _LOGGER.warning("FTMS speed=%.2f > 0, activating Sole protocol", speed)
-                _track_task(hass.async_create_task(_activate()))
+            if _hybrid_st == _HybridState.FTMS_IDLE:
+                if speed > 0:
+                    _speed_positive_count += 1
+                    if _speed_positive_count >= _SOLE_ACTIVATION_THRESHOLD:
+                        _hybrid_st = _HybridState.ACTIVATING
+                        _LOGGER.warning(
+                            "FTMS speed=%.2f > 0 for %d consecutive notifications, activating Sole",
+                            speed, _speed_positive_count,
+                        )
+                        _track_task(hass.async_create_task(_activate()))
+                else:
+                    _speed_positive_count = 0
             elif _hybrid_st == _HybridState.SOLE_ACTIVE:
                 if speed == 0:
                     _start_idle_timer()

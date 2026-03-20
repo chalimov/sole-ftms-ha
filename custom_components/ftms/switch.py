@@ -46,11 +46,16 @@ class ConnectionSwitchEntity(FtmsEntity, SwitchEntity, RestoreEntity):
     async def async_added_to_hass(self) -> None:
         """Call when the switch is added to hass."""
         state = await self.async_get_last_state()
-        self._attr_is_on = self.ftms is not None and self.ftms.is_connected
 
-        if state is not None and state.state == STATE_OFF and self.ftms is not None:
-            await self.ftms.disconnect()
+        if state is not None and state.state == STATE_OFF:
+            # User explicitly turned the switch off — respect that intent.
+            if self.ftms is not None:
+                await self.ftms.disconnect()
             self._attr_is_on = False
+        else:
+            # Default ON — user wants connection. Actual BLE state may lag
+            # behind (offline path, temporary failure) but the intent is ON.
+            self._attr_is_on = True
 
         await super().async_added_to_hass()
 
