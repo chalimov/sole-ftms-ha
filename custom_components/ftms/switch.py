@@ -48,30 +48,21 @@ class ConnectionSwitchEntity(FtmsEntity, SwitchEntity, RestoreEntity):
         state = await self.async_get_last_state()
 
         if state is not None and state.state == STATE_OFF:
-            # User explicitly turned the switch off — respect that intent.
-            if self.ftms is not None:
-                await self.ftms.disconnect()
+            # User explicitly turned the switch off previously.
+            # Don't disconnect here — async_setup_entry owns the connection
+            # lifecycle. Just reflect the intent; user can turn on to reload.
             self._attr_is_on = False
         else:
-            # Default ON — user wants connection. Actual BLE state may lag
-            # behind (offline path, temporary failure) but the intent is ON.
             self._attr_is_on = True
 
         await super().async_added_to_hass()
 
     @override
     async def async_turn_on(self, **kwargs: Any) -> None:
-        """Turn the entity on."""
-        if self.ftms is None:
-            return
-
-        try:
-            await self.ftms.connect()
-            self._attr_is_on = True
-        except BleakError:
-            self._attr_is_on = False
-            self.hass.config_entries.async_schedule_reload(self._data.entry_id)
+        """Turn the entity on — reload entry to get full FTMS subscription."""
+        self._attr_is_on = True
         self.async_write_ha_state()
+        self.hass.config_entries.async_schedule_reload(self._data.entry_id)
 
     @override
     async def async_turn_off(self, **kwargs: Any) -> None:
