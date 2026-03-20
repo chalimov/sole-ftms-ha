@@ -411,7 +411,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
 
     _RECONNECT_MAX_RETRIES = 3
     _RECONNECT_BASE_DELAY = 2  # seconds
-    _SOLE_IDLE_TIMEOUT = 30  # seconds of speed=0 before assuming workout ended
+    _SOLE_IDLE_TIMEOUT = 60  # seconds of speed=0 before assuming workout ended
 
     sole_client = None
     if ftms and hasattr(ftms, '_cli') and ftms.is_connected and has_sole_service(ftms._cli):
@@ -514,6 +514,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
                 prev_state.value, is_pause,
             )
 
+            # Let pending writes (especially EndWorkout ACK) flush before
+            # tearing down the BLE connection.  Without this delay the ACK
+            # task is cancelled by reset() before the GATT write completes.
+            await asyncio.sleep(1.0)
             sole_client.reset()
 
             for attempt in range(_RECONNECT_MAX_RETRIES):
@@ -557,18 +561,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
             _LOGGER.warning("EndWorkout received in state=%s, triggering reconnect", _hybrid_st.value)
             _track_task(hass.async_create_task(_hybrid_reconnect()))
 
-        def _on_reconnect_needed():
-            """Handle pause/stop via HA — reconnect to unblock START, but keep workout alive."""
-            _cancel_idle_timer()
-            if _hybrid_st not in (_HybridState.SOLE_ACTIVE, _HybridState.ACTIVATING):
-                return
-            _LOGGER.warning("HA-initiated stop — reconnecting to unblock START (workout continues)")
-            _track_task(hass.async_create_task(_hybrid_reconnect(is_pause=True)))
-
         sole_client = SoleClient(
             callback=_on_sole_event,
             on_end_workout=_on_end_workout,
-            on_reconnect_needed=_on_reconnect_needed,
         )
         sensors = list(SOLE_SENSORS)
 

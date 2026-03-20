@@ -59,6 +59,6 @@ async def async_get_config_entry_diagnostics(
 
     if data.sole_client is not None:
         diag["sole"]["subscribed"] = data.sole_client._subscribed
-        diag["sole"]["write_queue_size"] = data.sole_client._write_queue.qsize() if hasattr(data.sole_client, '_write_queue') else None
+        diag["sole"]["pending_writes"] = len(data.sole_client._pending_writes)
 
     return diag

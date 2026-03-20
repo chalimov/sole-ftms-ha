@@ -86,11 +86,13 @@ _OP_COMMAND = 0xF1
 
 # Opcodes that get a standard ACK (echo opcode + "OK")
 _STANDARD_ACK_OPCODES = {
-    _OP_WORKOUT_DATA, _OP_HR_TYPE, _OP_ERROR_CODE,
+    _OP_WORKOUT_DATA, _OP_HR_TYPE,
     _OP_SPEED, _OP_INCLINE, _OP_LEVEL, _OP_RPM, _OP_HEART_RATE,
     _OP_TARGET_HR, _OP_MAX_SPEED, _OP_MAX_INCLINE, _OP_MAX_LEVEL,
     _OP_END_WORKOUT, _OP_PROGRAM_GFX,
 }
+# NOTE: _OP_ERROR_CODE (0x10) is deliberately EXCLUDED — ACKing it
+# triggers "BLE App" mode which blocks the physical START button.
 
 # Opcodes that get NO response (just read the data)
 _NO_RESPONSE_OPCODES = {_OP_ACK, _OP_SET_WORKOUT_MODE, _OP_DEVICE_INFO}
@@ -200,11 +202,9 @@ class SoleClient:
         self,
         callback: SoleCallback,
         on_end_workout: Callable[[], None] | None = None,
-        on_reconnect_needed: Callable[[], None] | None = None,
     ) -> None:
         self._cb = callback
         self._on_end_workout = on_end_workout
-        self._on_reconnect_needed = on_reconnect_needed
         self._subscribed = False
         self._cli: BleakClient | None = None
         # Must hold strong references to tasks to prevent GC before completion.
@@ -392,15 +392,12 @@ class SoleClient:
     async def stop_belt(self) -> None:
         """Stop the belt (Sole 0xF1 0x06).
 
-        After stopping, signals a reconnect request so the hybrid protocol
-        can BLE-cycle to unblock the physical START button. This is NOT
-        end-of-workout — the treadmill's workout state survives the BLE
-        disconnect and resumes when the user presses START on the console.
+        Does NOT trigger a BLE reconnect. The treadmill will send EndWorkout
+        (0x32) when ready, or the idle timer will fire as a fallback — either
+        of those triggers the reconnect that unblocks the physical START button.
         """
         await self._send_sole_command(0x06)
-        _log("Stop belt sent via HA — requesting reconnect to unblock START")
-        if self._on_reconnect_needed:
-            self._on_reconnect_needed()
+        _log("Stop belt sent via HA — waiting for EndWorkout or idle timer")
 
     async def set_incline(self, percent: float) -> None:
         """Set absolute incline via FTMS Control Point (opcode 0x03).

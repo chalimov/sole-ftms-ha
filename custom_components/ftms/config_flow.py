@@ -35,6 +35,7 @@ from pyftms.client.const import FTMS_UUID
 
 from .const import CONF_EXTERNAL_HR_ENTITY, DOMAIN
 from .sole_client import SOLE_DEVICE_NAMES, SOLE_SERVICE_UUID, SOLE_SENSORS
+from . import _get_client_safe
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -52,19 +53,6 @@ def _get_machine_type_or_fallback(advertisement):
                 "assuming TREADMILL"
             )
             return MachineType.TREADMILL
-        raise
-
-
-def _get_client_safe(device, advertisement):
-    """Create FTMS client, falling back to MachineType if service data is missing."""
-    try:
-        return get_client(device, advertisement)
-    except NotFitnessMachineError:
-        if FTMS_SERVICE_UUID in advertisement.service_uuids:
-            _LOGGER.debug(
-                "Creating FTMS client with MachineType.TREADMILL fallback"
-            )
-            return get_client(device, MachineType.TREADMILL)
         raise
 
 

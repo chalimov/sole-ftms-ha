@@ -46,9 +46,9 @@ class ConnectionSwitchEntity(FtmsEntity, SwitchEntity, RestoreEntity):
     async def async_added_to_hass(self) -> None:
         """Call when the switch is added to hass."""
         state = await self.async_get_last_state()
-        self._attr_is_on = True
+        self._attr_is_on = self.ftms is not None and self.ftms.is_connected
 
-        if state is not None and state.state == STATE_OFF:
+        if state is not None and state.state == STATE_OFF and self.ftms is not None:
             await self.ftms.disconnect()
             self._attr_is_on = False
 
@@ -57,6 +57,8 @@ class ConnectionSwitchEntity(FtmsEntity, SwitchEntity, RestoreEntity):
     @override
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the entity on."""
+        if self.ftms is None:
+            return
 
         try:
             await self.ftms.connect()
@@ -69,6 +71,8 @@ class ConnectionSwitchEntity(FtmsEntity, SwitchEntity, RestoreEntity):
     @override
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the entity off."""
+        if self.ftms is None:
+            return
 
         await self.ftms.disconnect()
         self._attr_is_on = False

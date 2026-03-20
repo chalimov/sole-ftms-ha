@@ -9,14 +9,14 @@
       "service_uuid": "00001826-0000-1000-8000-00805f9b34fb"
     }
   ],
-  "codeowners": ["@dudanov"],
+  "codeowners": ["@chalimov"],
   "config_flow": true,
   "dependencies": ["bluetooth_adapters"],
-  "documentation": "https://github.com/dudanov/hassio-ftms/blob/master/README.md",
+  "documentation": "https://github.com/chalimov/sole-ftms-ha",
   "integration_type": "device",
   "iot_class": "local_push",
-  "issue_tracker": "https://github.com/dudanov/hassio-ftms/issues",
+  "issue_tracker": "https://github.com/chalimov/sole-ftms-ha/issues",
   "loggers": ["pyftms"],
   "requirements": ["pyftms==0.4.10"],
-  "version": "0.6.4"
+  "version": "0.6.5"
 }
