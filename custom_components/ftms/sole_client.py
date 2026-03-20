@@ -41,7 +41,13 @@ if not _FILE_LOGGER.handlers:
 
 
 def _log(msg, *args):
-    """Log to both HA log (WARNING) and dedicated file (DEBUG)."""
+    """Log to dedicated file (DEBUG) and HA log (DEBUG)."""
+    _LOGGER.debug(msg, *args)
+    _FILE_LOGGER.debug(msg, *args)
+
+
+def _log_warn(msg, *args):
+    """Log warnings to both HA log (WARNING) and dedicated file."""
     _LOGGER.warning(msg, *args)
     _FILE_LOGGER.debug(msg, *args)
 
@@ -229,7 +235,7 @@ class SoleClient:
             char = cli.services.get_characteristic(uuid)
             if char:
                 await cli.start_notify(char, self._on_notify)
-                _LOGGER.warning("Subscribed to Sole %s notify", label)
+                _LOGGER.info("Subscribed to Sole %s notify", label)
 
         self._subscribed = True
 
@@ -238,11 +244,11 @@ class SoleClient:
         try:
             get_info = _build_frame(_OP_DEVICE_INFO)
             await cli.write_gatt_char(SOLE_WRITE_UUID, get_info, response=False)
-            _LOGGER.warning("Sole: sent GetDeviceInfo to initiate data flow")
+            _LOGGER.info("Sole: sent GetDeviceInfo to initiate data flow")
         except Exception:
             _LOGGER.warning("Sole: failed to send GetDeviceInfo", exc_info=True)
 
-        _LOGGER.warning("Sole: subscribed (selective ACK — skip ErrorCode to keep buttons free)")
+        _LOGGER.info("Sole: subscribed (selective ACK — skip ErrorCode to keep buttons free)")
 
     def reset(self) -> None:
         """Reset state on disconnect."""
@@ -341,7 +347,7 @@ class SoleClient:
 
     def _schedule_write(self, coro) -> None:
         """Schedule a coroutine as a task with a strong reference to prevent GC."""
-        task = asyncio.ensure_future(coro)
+        task = asyncio.create_task(coro)
         self._pending_writes.add(task)
         task.add_done_callback(self._pending_writes.discard)
 
@@ -352,7 +358,7 @@ class SoleClient:
                 await self._cli.write_gatt_char(SOLE_WRITE_UUID, data, response=False)
                 _log("Sole TX sent: %s", data.hex(" "))
             else:
-                _log("Sole TX: client not connected, cannot echo")
+                _log_warn("Sole TX: client not connected, cannot echo")
         except Exception:
             _LOGGER.warning("Failed to echo WorkoutMode", exc_info=True)
 
@@ -364,7 +370,7 @@ class SoleClient:
                 await self._cli.write_gatt_char(SOLE_WRITE_UUID, ack, response=False)
                 _log("Sole TX sent: %s (ACK 0x%02X)", ack.hex(" "), opcode)
             else:
-                _log("Sole TX: client not connected, cannot ACK 0x%02X", opcode)
+                _log_warn("Sole TX: client not connected, cannot ACK 0x%02X", opcode)
         except Exception:
             _LOGGER.warning("Failed to send Sole ACK for 0x%02X", opcode, exc_info=True)
 
@@ -375,7 +381,7 @@ class SoleClient:
     async def _send_sole_command(self, sub_opcode: int) -> None:
         """Send Sole Command (0xF1) with sub-opcode."""
         if not self._cli or not self._cli.is_connected:
-            _log("Cannot send command 0x%02X: not connected", sub_opcode)
+            _log_warn("Cannot send command 0x%02X: not connected", sub_opcode)
             return
         frame = _build_frame(_OP_COMMAND, bytes([sub_opcode]))
         await self._cli.write_gatt_char(SOLE_WRITE_UUID, frame, response=False)
@@ -406,7 +412,7 @@ class SoleClient:
         Requires: FTMS subscribed + Request Control (0x00) + 0xE9 sent.
         """
         if not self._cli or not self._cli.is_connected:
-            _log("Cannot set incline: not connected")
+            _log_warn("Cannot set incline: not connected")
             return
         value = int(percent * 10)  # 0.1% resolution
         data = bytes([0x03]) + struct.pack("<h", value)
@@ -415,4 +421,4 @@ class SoleClient:
             await self._cli.write_gatt_char(cp_ch, data, response=True)
             _log("Set incline to %.1f%% (FTMS CP: %s)", percent, data.hex(" "))
         else:
-            _log("Cannot set incline: FTMS CP characteristic not found")
+            _log_warn("Cannot set incline: FTMS CP characteristic not found")

@@ -148,7 +148,6 @@ _pyftms_client.read_features = _patched_read_features
 
 
 # --- Monkey-patch realtime data parser to tolerate non-standard packets ---
-from pyftms.models.realtime_data.common import RealtimeData as _RealtimeData
 from pyftms.client.backends import updater as _pyftms_updater
 
 
@@ -260,7 +259,7 @@ async def _patched_connect(self) -> None:
     # FTMS Treadmill Data is subscribed directly via BleakClient instead
     # (exactly like the working ble-test.py hybrid does).
     if self._cli.services.get_service(SOLE_SERVICE_UUID) is not None:
-        _LOGGER.warning("Sole service detected — skipping FTMS controller + updater")
+        _LOGGER.info("Sole service detected — skipping FTMS controller + updater")
     else:
         await self._controller.subscribe(self._cli)
         await self._updater.subscribe(self._cli, self._data_uuid)
@@ -358,8 +357,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
         except AttributeError:
             dev_info = {}
 
-        _LOGGER.debug(f"Device Information: {dev_info}")
-        _LOGGER.debug(f"Machine type: {ftms.machine_type.name}")
+        _LOGGER.debug("Device Information: %s", dev_info)
+        _LOGGER.debug("Machine type: %s", ftms.machine_type.name)
 
         unique_id = "".join(
             x for x in dev_info.get("serial_number", address) if x.isalnum()
@@ -401,7 +400,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
     #   speed > 0: activate Sole on same connection
     #   EndWorkout (0x32): full BLE disconnect -> reconnect -> FTMS_IDLE
     import struct
-    from .sole_client import SoleClient, has_sole_service, SOLE_SENSORS
+    from .sole_client import SoleClient, has_sole_service, SOLE_SENSORS, _FILE_LOGGER
     from .binary_sensor import WORKOUT_ACTIVE_KEY
     from pyftms.client import const as sole_const
     from pyftms.client.backends.event import UpdateEvent
@@ -416,7 +415,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
 
     sole_client = None
     if ftms and hasattr(ftms, '_cli') and ftms.is_connected and has_sole_service(ftms._cli):
-        _LOGGER.warning("Sole hybrid mode: direct FTMS subscription (no pyftms updater)")
+        _LOGGER.info("Sole hybrid mode: direct FTMS subscription (no pyftms updater)")
 
         _hybrid_st = _HybridState.FTMS_IDLE
         _speed_positive_count = 0  # consecutive FTMS notifications with speed > 0
@@ -477,7 +476,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
             ch = cli.services.get_characteristic(FTMS_TREADMILL_DATA_UUID)
             if ch:
                 await cli.start_notify(ch, _on_ftms_raw_notify)
-                _LOGGER.warning("Subscribed to FTMS Treadmill Data (direct)")
+                _LOGGER.info("Subscribed to FTMS Treadmill Data (direct)")
+            else:
+                _LOGGER.error("FTMS Treadmill Data characteristic NOT FOUND — no speed data will arrive")
 
             cp_ch = cli.services.get_characteristic(FTMS_CONTROL_POINT_UUID)
             if cp_ch:
@@ -486,7 +487,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
                 await cli.write_gatt_char(cp_ch, bytes([0x00]), response=True)
                 await asyncio.sleep(0.3)
                 await cli.write_gatt_char(cp_ch, bytes([0xE9]), response=True)
-                _LOGGER.warning("FTMS: sent Request Control + 0xE9")
+                _LOGGER.info("FTMS: sent Request Control + 0xE9")
+            else:
+                _LOGGER.error("FTMS Control Point characteristic NOT FOUND — 0xE9 not sent")
 
         async def _activate():
             """Activate Sole protocol on the existing BLE connection."""
@@ -497,6 +500,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
             try:
                 await sole_client.subscribe(ftms._cli)
                 _hybrid_st = _HybridState.SOLE_ACTIVE
+                # Start idle timer as safety net — if no data arrives at all
+                # (FTMS stops in BLE App mode, Sole idle), this ensures recovery
+                # instead of being stuck forever. Cancelled by first speed > 0.
+                _start_idle_timer()
                 coordinator.async_set_updated_data(
                     UpdateEvent(event_id="update", event_data={WORKOUT_ACTIVE_KEY: True})
                 )
@@ -530,12 +537,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
                 except Exception:
                     _LOGGER.debug("Disconnect error (attempt %d)", attempt + 1, exc_info=True)
 
-                ftms._need_connect = True
+                ftms.need_connect = True
 
                 try:
                     await ftms.connect()
                     await _subscribe_ftms_direct(ftms._cli)
-                    _LOGGER.warning("Reconnected (attempt %d), START button unblocked", attempt + 1)
+                    _LOGGER.info("Reconnected (attempt %d), START button unblocked", attempt + 1)
                     break
                 except Exception:
                     _LOGGER.warning(
@@ -581,6 +588,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
                 return  # speed not present
             speed = struct.unpack('<H', data[2:4])[0] * 0.01
             _LOGGER.debug("FTMS raw: speed=%.2f state=%s count=%d", speed, _hybrid_st.value, _speed_positive_count)
+            _FILE_LOGGER.debug("FTMS raw: speed=%.2f state=%s count=%d", speed, _hybrid_st.value, _speed_positive_count)
 
             update = {sole_const.SPEED_INSTANT: speed}
             coordinator.async_set_updated_data(
@@ -613,12 +621,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
                 task.cancel()
         entry.async_on_unload(_cancel_hybrid_tasks)
 
-        # Initial subscription after connect
-        try:
-            await _subscribe_ftms_direct(ftms._cli)
-        except Exception as exc:
-            await ftms.disconnect()
-            raise ConfigEntryNotReady(translation_key="connection_failed") from exc
     # --- End Sole hybrid support ---
 
     # --- External HR monitor support ---
@@ -695,6 +697,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
 
     # Platforms initialization
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    # Subscribe FTMS AFTER entities exist (avoids race where _activate() pushes
+    # coordinator updates before entities are registered as listeners).
+    if sole_client is not None and ftms is not None and ftms.is_connected:
+        try:
+            await _subscribe_ftms_direct(ftms._cli)
+        except Exception as exc:
+            await ftms.disconnect()
+            raise ConfigEntryNotReady(translation_key="connection_failed") from exc
 
     entry.async_on_unload(entry.add_update_listener(_async_entry_update_handler))
 

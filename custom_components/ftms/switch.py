@@ -3,7 +3,6 @@
 import logging
 from typing import Any, override
 
-from bleak.exc import BleakError
 from homeassistant.components.switch import (
     SwitchDeviceClass,
     SwitchEntity,
