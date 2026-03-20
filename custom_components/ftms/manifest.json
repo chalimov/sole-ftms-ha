@@ -18,5 +18,5 @@
   "issue_tracker": "https://github.com/dudanov/hassio-ftms/issues",
   "loggers": ["pyftms"],
   "requirements": ["pyftms==0.4.10"],
-  "version": "0.6.2"
+  "version": "0.6.3"
 }
