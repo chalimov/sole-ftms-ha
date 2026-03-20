@@ -235,7 +235,7 @@ class SoleClient:
             char = cli.services.get_characteristic(uuid)
             if char:
                 await cli.start_notify(char, self._on_notify)
-                _LOGGER.info("Subscribed to Sole %s notify", label)
+                _LOGGER.warning("Subscribed to Sole %s notify", label)
 
         self._subscribed = True
 
@@ -244,11 +244,11 @@ class SoleClient:
         try:
             get_info = _build_frame(_OP_DEVICE_INFO)
             await cli.write_gatt_char(SOLE_WRITE_UUID, get_info, response=False)
-            _LOGGER.info("Sole: sent GetDeviceInfo to initiate data flow")
+            _LOGGER.warning("Sole: sent GetDeviceInfo to initiate data flow")
         except Exception:
             _LOGGER.warning("Sole: failed to send GetDeviceInfo", exc_info=True)
 
-        _LOGGER.info("Sole: subscribed (selective ACK — skip ErrorCode to keep buttons free)")
+        _LOGGER.warning("Sole: subscribed (selective ACK — skip ErrorCode to keep buttons free)")
 
     def reset(self) -> None:
         """Reset state on disconnect."""

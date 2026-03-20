@@ -259,7 +259,7 @@ async def _patched_connect(self) -> None:
     # FTMS Treadmill Data is subscribed directly via BleakClient instead
     # (exactly like the working ble-test.py hybrid does).
     if self._cli.services.get_service(SOLE_SERVICE_UUID) is not None:
-        _LOGGER.info("Sole service detected — skipping FTMS controller + updater")
+        _LOGGER.warning("Sole service detected — skipping FTMS controller + updater")
     else:
         await self._controller.subscribe(self._cli)
         await self._updater.subscribe(self._cli, self._data_uuid)
@@ -415,7 +415,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
 
     sole_client = None
     if ftms and hasattr(ftms, '_cli') and ftms.is_connected and has_sole_service(ftms._cli):
-        _LOGGER.info("Sole hybrid mode: direct FTMS subscription (no pyftms updater)")
+        _LOGGER.warning("Sole hybrid mode: direct FTMS subscription (no pyftms updater)")
 
         _hybrid_st = _HybridState.FTMS_IDLE
         _speed_positive_count = 0  # consecutive FTMS notifications with speed > 0
@@ -476,7 +476,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
             ch = cli.services.get_characteristic(FTMS_TREADMILL_DATA_UUID)
             if ch:
                 await cli.start_notify(ch, _on_ftms_raw_notify)
-                _LOGGER.info("Subscribed to FTMS Treadmill Data (direct)")
+                _LOGGER.warning("Subscribed to FTMS Treadmill Data (direct)")
             else:
                 _LOGGER.error("FTMS Treadmill Data characteristic NOT FOUND — no speed data will arrive")
 
@@ -487,7 +487,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
                 await cli.write_gatt_char(cp_ch, bytes([0x00]), response=True)
                 await asyncio.sleep(0.3)
                 await cli.write_gatt_char(cp_ch, bytes([0xE9]), response=True)
-                _LOGGER.info("FTMS: sent Request Control + 0xE9")
+                _LOGGER.warning("FTMS: sent Request Control + 0xE9")
             else:
                 _LOGGER.error("FTMS Control Point characteristic NOT FOUND — 0xE9 not sent")
 
@@ -542,7 +542,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
                 try:
                     await ftms.connect()
                     await _subscribe_ftms_direct(ftms._cli)
-                    _LOGGER.info("Reconnected (attempt %d), START button unblocked", attempt + 1)
+                    _LOGGER.warning("Reconnected (attempt %d), START button unblocked", attempt + 1)
                     break
                 except Exception:
                     _LOGGER.warning(
