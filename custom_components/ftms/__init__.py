@@ -621,6 +621,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
                 task.cancel()
         entry.async_on_unload(_cancel_hybrid_tasks)
 
+        # Subscribe FTMS before entity setup — must not raise ConfigEntryNotReady
+        # after async_forward_entry_setups or HA retries with platforms already
+        # registered. The 3-notification debounce prevents premature activation.
+        try:
+            await _subscribe_ftms_direct(ftms._cli)
+        except Exception as exc:
+            await ftms.disconnect()
+            raise ConfigEntryNotReady(translation_key="connection_failed") from exc
     # --- End Sole hybrid support ---
 
     # --- External HR monitor support ---
@@ -697,15 +705,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
 
     # Platforms initialization
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-
-    # Subscribe FTMS AFTER entities exist (avoids race where _activate() pushes
-    # coordinator updates before entities are registered as listeners).
-    if sole_client is not None and ftms is not None and ftms.is_connected:
-        try:
-            await _subscribe_ftms_direct(ftms._cli)
-        except Exception as exc:
-            await ftms.disconnect()
-            raise ConfigEntryNotReady(translation_key="connection_failed") from exc
 
     entry.async_on_unload(entry.add_update_listener(_async_entry_update_handler))
 
