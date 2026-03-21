@@ -590,10 +590,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
             _LOGGER.debug("FTMS raw: speed=%.2f state=%s count=%d", speed, _hybrid_st.value, _speed_positive_count)
             _FILE_LOGGER.debug("FTMS raw: speed=%.2f state=%s count=%d", speed, _hybrid_st.value, _speed_positive_count)
 
-            update = {sole_const.SPEED_INSTANT: speed}
-            coordinator.async_set_updated_data(
-                UpdateEvent(event_id="update", event_data=update)
-            )
+            if _hybrid_st != _HybridState.SOLE_ACTIVE:
+                update = {sole_const.SPEED_INSTANT: speed}
+                coordinator.async_set_updated_data(
+                    UpdateEvent(event_id="update", event_data=update)
+                )
 
             if _hybrid_st == _HybridState.FTMS_IDLE:
                 if speed > 0:
