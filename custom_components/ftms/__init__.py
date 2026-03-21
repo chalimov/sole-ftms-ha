@@ -266,6 +266,25 @@ async def _patched_connect(self) -> None:
 
 
 _FitnessMachineClass._connect = _patched_connect
+
+
+# --- Monkey-patch _on_disconnect to survive double-call ---
+# pyftms does `del self._cli` which crashes with AttributeError if
+# called twice (late BLE proxy disconnect for a stale connection).
+# The crash prevents our disconnect callback from firing → no reload.
+_original_on_disconnect = _FitnessMachineClass._on_disconnect
+
+
+def _safe_on_disconnect(self, cli):
+    if not hasattr(self, "_cli"):
+        _LOGGER.debug("_on_disconnect called but _cli already deleted, skipping")
+        if hasattr(self, "_disconnect_cb") and self._disconnect_cb:
+            self._disconnect_cb(self)
+        return
+    _original_on_disconnect(self, cli)
+
+
+_FitnessMachineClass._on_disconnect = _safe_on_disconnect
 # --- End _connect monkey-patch ---
 
 
