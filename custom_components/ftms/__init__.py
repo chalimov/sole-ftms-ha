@@ -342,8 +342,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
         task.add_done_callback(_hybrid_tasks.discard)
 
     def _on_disconnect(ftms_: pyftms.FitnessMachine) -> None:
-        """Disconnect handler. Reload entry on disconnect (unless hybrid reconnecting)."""
+        """Disconnect handler. Reconnect mid-workout, reload otherwise."""
+        _LOGGER.warning(
+            "BLE disconnected (state=%s, need_connect=%s)",
+            _hybrid_st.value if _hybrid_st else None,
+            ftms_.need_connect,
+        )
         if _hybrid_st == _HybridState.RECONNECTING:
+            return  # Already handling reconnect
+        if _hybrid_st in (_HybridState.SOLE_ACTIVE, _HybridState.ACTIVATING):
+            # Mid-workout BLE drop — reconnect gracefully, keep session alive
+            _track_task(hass.async_create_task(_hybrid_reconnect(is_pause=True)))
             return
         if ftms_.need_connect:
             hass.config_entries.async_schedule_reload(entry.entry_id)
@@ -438,6 +447,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
 
         _hybrid_st = _HybridState.FTMS_IDLE
         _speed_positive_count = 0  # consecutive FTMS notifications with speed > 0
+        _workout_active = False    # True once WORKOUT_ACTIVE_KEY: True sent
+        _end_workout_pending = False  # EndWorkout arrived during RECONNECTING
 
         # --- Idle timer: fallback for missing EndWorkout (0x32) ---
         # If speed stays at 0 for _SOLE_IDLE_TIMEOUT seconds while SOLE_ACTIVE,
@@ -451,14 +462,28 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
 
             @callback
             def _idle_timeout(_now):
-                nonlocal _idle_timer_unsub
+                nonlocal _idle_timer_unsub, _workout_active
                 _idle_timer_unsub = None
                 if _hybrid_st == _HybridState.SOLE_ACTIVE:
+                    # Stage 1: reconnect to unblock START, keep session alive
                     _LOGGER.warning(
-                        "Speed-zero timeout (%ds) — reconnecting to unblock START (workout continues)",
+                        "Speed-zero timeout (%ds) — reconnecting to unblock START",
                         _SOLE_IDLE_TIMEOUT,
                     )
                     _track_task(hass.async_create_task(_hybrid_reconnect(is_pause=True)))
+                elif _hybrid_st == _HybridState.FTMS_IDLE and _workout_active:
+                    # Stage 2: still speed=0 after reconnect — workout is over
+                    _LOGGER.warning(
+                        "Post-reconnect idle timeout (%ds) — ending workout session",
+                        _SOLE_IDLE_TIMEOUT,
+                    )
+                    _workout_active = False
+                    coordinator.async_set_updated_data(
+                        UpdateEvent(
+                            event_id="update",
+                            event_data={WORKOUT_ACTIVE_KEY: False},
+                        )
+                    )
 
             from homeassistant.helpers.event import async_call_later
             _idle_timer_unsub = async_call_later(hass, _SOLE_IDLE_TIMEOUT, _idle_timeout)
@@ -512,7 +537,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
 
         async def _activate():
             """Activate Sole protocol on the existing BLE connection."""
-            nonlocal _hybrid_st, _speed_positive_count
+            nonlocal _hybrid_st, _speed_positive_count, _workout_active
             _speed_positive_count = 0
             if _hybrid_st != _HybridState.ACTIVATING:
                 return  # State changed while task was queued
@@ -523,16 +548,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
                 # (FTMS stops in BLE App mode, Sole idle), this ensures recovery
                 # instead of being stuck forever. Cancelled by first speed > 0.
                 _start_idle_timer()
-                coordinator.async_set_updated_data(
-                    UpdateEvent(event_id="update", event_data={WORKOUT_ACTIVE_KEY: True})
-                )
+                if not _workout_active:
+                    _workout_active = True
+                    coordinator.async_set_updated_data(
+                        UpdateEvent(event_id="update", event_data={WORKOUT_ACTIVE_KEY: True})
+                    )
             except Exception:
                 _LOGGER.warning("Failed to activate Sole", exc_info=True)
                 _hybrid_st = _HybridState.FTMS_IDLE
 
         async def _hybrid_reconnect(is_pause=False):
             """BLE disconnect + reconnect to exit BLE App mode, with retry."""
-            nonlocal _hybrid_st, _speed_positive_count
+            nonlocal _hybrid_st, _speed_positive_count, _workout_active, _end_workout_pending
             _cancel_idle_timer()
             _speed_positive_count = 0
             if _hybrid_st == _HybridState.RECONNECTING:
@@ -577,16 +604,33 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
                 return
 
             _hybrid_st = _HybridState.FTMS_IDLE
+
+            # Check if EndWorkout arrived during reconnect (Fix 4)
+            if _end_workout_pending:
+                _end_workout_pending = False
+                is_pause = False  # Override — EndWorkout means session is over
+
             if not is_pause:
+                _workout_active = False
                 coordinator.async_set_updated_data(
                     UpdateEvent(event_id="update", event_data={WORKOUT_ACTIVE_KEY: False})
                 )
+            elif _workout_active:
+                # Session still alive after pause-reconnect. Re-arm idle timer so that
+                # if speed stays 0 for another 60s, we end the session (stage 2).
+                _start_idle_timer()
 
         def _on_end_workout():
-            """Handle Sole EndWorkout — only reconnect from active states."""
+            """Handle Sole EndWorkout — reconnect or defer if mid-reconnect."""
+            nonlocal _end_workout_pending
             _cancel_idle_timer()
+            if _hybrid_st == _HybridState.RECONNECTING:
+                _LOGGER.warning("EndWorkout received during reconnect — will end session after")
+                _end_workout_pending = True
+                return
             if _hybrid_st not in (_HybridState.SOLE_ACTIVE, _HybridState.ACTIVATING):
-                _LOGGER.warning("EndWorkout received but state=%s, ignoring", _hybrid_st.value if _hybrid_st else None)
+                _LOGGER.warning("EndWorkout received but state=%s, ignoring",
+                                _hybrid_st.value if _hybrid_st else None)
                 return
             _LOGGER.warning("EndWorkout received in state=%s, triggering reconnect", _hybrid_st.value)
             _track_task(hass.async_create_task(_hybrid_reconnect()))
@@ -618,6 +662,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
             if _hybrid_st == _HybridState.FTMS_IDLE:
                 if speed > 0:
                     _speed_positive_count += 1
+                    if _workout_active:
+                        _cancel_idle_timer()  # User resumed — cancel session-end timer
                     if _speed_positive_count >= _SOLE_ACTIVATION_THRESHOLD:
                         _hybrid_st = _HybridState.ACTIVATING
                         _LOGGER.warning(
@@ -627,6 +673,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: FtmsConfigEntry) -> bool
                         _track_task(hass.async_create_task(_activate()))
                 else:
                     _speed_positive_count = 0
+                    if _workout_active:
+                        _start_idle_timer()  # Re-arm if session alive and speed=0
             elif _hybrid_st == _HybridState.SOLE_ACTIVE:
                 if speed == 0:
                     _start_idle_timer()
